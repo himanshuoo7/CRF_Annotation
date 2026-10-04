@@ -94,6 +94,25 @@ that flips to PyMuPDF's top-left origin, and it detects header rectangles
 written by older versions (which were stored top-left) so old workbooks still
 render correctly.
 
+## Dependencies and licensing
+
+| Package | Licence |
+|---|---|
+| pandas, XlsxWriter, openpyxl | BSD-3 / MIT |
+| pypdf | BSD-3 |
+| anthropic | MIT |
+| **PyMuPDF** | **AGPL-3.0, or a commercial licence from Artifex** |
+
+PyMuPDF is the only copyleft dependency. AGPL obligations attach on
+distribution and on network use, so this matters before the package is shipped
+or offered as a service, not while it is used internally.
+
+A permissive substitute exists if that becomes a problem: `pdfplumber` (MIT)
+for text extraction and `pypdf` (BSD-3) for annotations, which together cover
+everything PyMuPDF is used for here. The cost is roughly 6x slower extraction —
+about four seconds on a 300-page CRF — and a rewrite of `pdf_text.py` and
+`annotate.py`.
+
 ## Tests
 
 ```bash
