@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Runtime artefacts — never commit study data or credentials
+*.xlsx
+*.pdf
+ai_cache/
+.acrf.lock
+.env

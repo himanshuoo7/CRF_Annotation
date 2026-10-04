@@ -1,0 +1,16 @@
+{
+  "name": "acrf-tools",
+  "owner": {
+    "name": "Himanshu Dadhich"
+  },
+  "description": "SDTM annotated-CRF generation and review for Claude Code",
+  "plugins": [
+    {
+      "name": "acrf",
+      "source": "./plugins/acrf",
+      "description": "Generate, review and diagnose SDTM annotated CRFs from any EDC",
+      "version": "1.0.0",
+      "keywords": ["sdtm", "acrf", "clinical", "cdisc", "crf", "edc"]
+    }
+  ]
+}

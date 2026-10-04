@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Credentials — never commit
+.env
+*.key
+*.pem
+
+# Study data and run artefacts. Clinical data must not enter this repo;
+# the test suite generates its own synthetic fixtures at runtime.
+*.xlsx
+*.xls
+*.pdf
+*.csv
+ai_cache/
+.acrf.lock
+
+# Internal working notes and reference material — kept locally, not published.
+/crf_annotation.py
+/optimized_crf/REVIEW.md

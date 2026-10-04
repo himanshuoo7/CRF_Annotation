@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crf-annotation"
+version = "1.0.0"
+description = "Annotate a blank CRF with SDTM mappings (aCRF generation)."
+requires-python = ">=3.9"
+readme = "README.md"
+license = {text = "Proprietary"}
+authors = [{name = "Himanshu Dadhich"}]
+dependencies = [
+    "pandas>=1.5",
+    "pymupdf>=1.23",
+    "pypdf>=3.9",
+    "XlsxWriter>=3.0",
+    "openpyxl>=3.1",
+    "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+crf-annotate = "crf_annotation.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["crf_annotation*"]
+
+[tool.setuptools.package-data]
+crf_annotation = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "RET", "C4"]
+# UP006/UP035/UP007/UP045 rewrite typing.X to builtins/PEP 604, which this
+# package cannot adopt while it supports Python 3.9 at runtime.
+ignore = ["E501", "UP006", "UP035", "UP007", "UP045"]

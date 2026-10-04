@@ -1,0 +1,24 @@
+{
+  "name": "acrf",
+  "displayName": "SDTM aCRF",
+  "version": "1.0.0",
+  "description": "Generate SDTM annotated CRFs from any EDC, review the annotations that were guessed rather than matched exactly, and diagnose runs that came out thin.",
+  "keywords": [
+    "sdtm",
+    "acrf",
+    "clinical",
+    "cdisc",
+    "crf",
+    "edc",
+    "veeva",
+    "rave"
+  ],
+  "userConfig": {
+    "package_path": {
+      "type": "directory",
+      "title": "crf-annotation source directory",
+      "description": "Only needed if crf-annotation is not pip-installed. Added to PYTHONPATH when the skill's scripts run.",
+      "required": false
+    }
+  }
+}

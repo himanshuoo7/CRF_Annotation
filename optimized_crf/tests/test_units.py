@@ -1,0 +1,218 @@
+"""Unit coverage for the parts with the sharpest edges."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+
+from crf_annotation.annotate import parse_pos
+from crf_annotation.config_workbook import read_config_workbook, write_config_workbook
+from crf_annotation.constants import ANNOTATION_FIELD, COORDINATE_COLUMNS, EMPTY_POS
+from crf_annotation.layout import _Occupancy, place_annotations
+from crf_annotation.merge import unmapped_variables
+from crf_annotation.job import CrfJob, InputError
+from crf_annotation.pdf_text import PageGeometry
+from crf_annotation.specs import SpecCatalog, domain_of, strip_supp
+
+
+# --- coordinate parsing ----------------------------------------------------
+def test_parse_pos_accepts_a_normal_rectangle():
+    assert parse_pos("[10, 20, 30, 40]") == (10.0, 20.0, 30.0, 40.0)
+
+
+def test_parse_pos_rejects_the_empty_marker():
+    assert parse_pos(EMPTY_POS) is None
+    assert parse_pos("") is None
+    assert parse_pos(None) is None
+
+
+@pytest.mark.parametrize("value", ["[1,2,3]", "[a,b,c,d]", "__import__('os').system('id')"])
+def test_parse_pos_never_executes_its_input(value):
+    """The old code called eval() on this spreadsheet cell."""
+    assert parse_pos(value) is None
+
+
+def test_parse_pos_rejects_inverted_rectangles():
+    assert parse_pos("[30, 40, 10, 20]") is None
+
+
+# --- spec helpers ----------------------------------------------------------
+def test_strip_supp_and_domain_of():
+    assert strip_supp("SUPPAE") == "AE"
+    assert strip_supp("AE") == "AE"
+    assert domain_of("SUPPAE.QVAL where QNAM = X") == "AE"
+    assert domain_of("no dot here") == ""
+
+
+def test_spec_catalog_prefers_invar_parameters(tmp_path):
+    import json
+
+    spec = {
+        "domain": {"dataset": "VS", "label": "Vital Signs",
+                   "functions": [{"source_dataset": "VS_FORM"}]},
+        "variables": [{
+            "dataset": "VS", "variable": "VSORRES",
+            "functions": [{
+                "function": "g_filter",
+                "parameters": [
+                    {"name": "inval_filter", "value": "SYSBP"},   # a literal, not a variable
+                    {"name": "invar", "value": ["SYSBP_RESULT"]},
+                ],
+            }],
+        }],
+    }
+    path = tmp_path / "vs.json"
+    path.write_text(json.dumps(spec))
+
+    catalog = SpecCatalog.load([path])
+    assert list(catalog.mappings["RSRC_VAR"]) == ["SYSBP_RESULT"]
+    assert catalog.header_text("VS") == "VS (Vital Signs)"
+
+
+def test_spec_catalog_skips_malformed_files(tmp_path):
+    (tmp_path / "broken.json").write_text("{not json")
+    (tmp_path / "nodomain.json").write_text('{"variables": []}')
+    catalog = SpecCatalog.load(list(tmp_path.glob("*.json")))
+    assert catalog.mappings.empty
+
+
+# --- form context ----------------------------------------------------------
+def test_two_banners_on_one_page_do_not_duplicate_items():
+    """Binding must not multiply rows: a page may carry more than one banner."""
+    from crf_annotation.binding import BannerBinder, bind_forms
+    from crf_annotation.design import Form, build
+
+    design = build("test", forms=[Form(oid="A", label="A"), Form(oid="B", label="B")],
+                   fields=[])
+    items = pd.DataFrame({
+        "PAGE_NO": [1, 1, 1, 1],
+        "ITM_TEXT": ["Form: A", "Height", "Form: B", "Weight"],
+    })
+    bound = bind_forms(items, design, BannerBinder())
+    assert len(bound) == len(items)
+    assert list(bound["FORM_OID"]) == ["A", "A", "B", "B"]
+
+
+# --- layout ----------------------------------------------------------------
+def test_occupancy_detects_overlap():
+    index = _Occupancy([(0, 0, 10, 10)])
+    assert index.collides((5, 5, 15, 15))
+    assert not index.collides((11, 0, 20, 10))
+
+
+def _row(page, x0, x1, y0, text):
+    return {"PAGE_NO": page, "ITM_TEXT": "label", "ATEXT": text,
+            "X0": x0, "Y0": y0, "X1": x1, "Y1": y0 + 12}
+
+
+def test_annotations_do_not_overlap_each_other():
+    merged = pd.DataFrame([_row(1, 60, 120, 700, "AE.AETERM"), _row(1, 60, 120, 700, "AE.AESEV")])
+    geometry = PageGeometry({1: (612.0, 792.0)})
+    placed, stats = place_annotations(merged, geometry)
+
+    assert stats.placed == 2
+    boxes = [parse_pos(p) for p in placed["POS1"]]
+    (ax0, ay0, ax1, ay1), (bx0, by0, bx1, by1) = boxes
+    assert ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0
+
+
+def test_annotations_stay_inside_the_page():
+    merged = pd.DataFrame([_row(1, 400, 560, 700, "AE.A_VERY_LONG_ANNOTATION_INDEED")])
+    geometry = PageGeometry({1: (612.0, 792.0)})
+    placed, _ = place_annotations(merged, geometry)
+    box = parse_pos(placed.loc[0, "POS1"])
+    assert box is None or box[2] <= 612.0
+
+
+def test_rows_without_annotation_text_get_no_box():
+    merged = pd.DataFrame([_row(1, 60, 120, 700, "")])
+    placed, stats = place_annotations(merged, PageGeometry({1: (612.0, 792.0)}))
+    assert stats.placed == 0
+    assert placed.loc[0, "POS1"] == EMPTY_POS
+
+
+# --- config workbook -------------------------------------------------------
+def _coordinates() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"PAGE_NO": 1, "DS_OID": "DM_FORM", "ITM_TEXT": "Sex",
+             "DS_NAME": "Demographics", "POS1": "[10, 20, 30, 40]",
+             "A_TEXT": "DM.SEX", "ANNOTATION_TYPE": ANNOTATION_FIELD,
+             "MATCH_METHOD": "exact", "MATCH_CONFIDENCE": 1.0, "MATCH_NOTE": ""}
+        ],
+        columns=list(COORDINATE_COLUMNS),
+    )
+
+
+def test_workbook_round_trip_is_lossless(tmp_path):
+    path = tmp_path / "config.xlsx"
+    original = _coordinates()
+    write_config_workbook(path, original)
+    restored = read_config_workbook(path)
+    pd.testing.assert_frame_equal(
+        original.reset_index(drop=True), restored.reset_index(drop=True), check_dtype=False
+    )
+
+
+def test_legacy_atext_column_is_understood(tmp_path):
+    path = tmp_path / "legacy.xlsx"
+    legacy = _coordinates().rename(columns={"A_TEXT": "ATEXT"})
+    with pd.ExcelWriter(path, engine="xlsxwriter") as writer:
+        legacy.to_excel(writer, sheet_name="coordinates", index=False)
+    restored = read_config_workbook(path)
+    assert list(restored["A_TEXT"]) == ["DM.SEX"]
+
+
+# --- job -------------------------------------------------------------------
+def test_a_missing_crf_is_named(tmp_path):
+    with pytest.raises(InputError, match="Blank CRF not found"):
+        CrfJob.build(crf=tmp_path / "nope.pdf", output_dir=tmp_path / "out")
+
+
+def test_specs_and_design_accept_a_directory(tmp_path):
+    crf = tmp_path / "blank.pdf"
+    crf.write_bytes(b"%PDF-1.4")
+    specs = tmp_path / "specs"
+    specs.mkdir()
+    (specs / "a.json").write_text("{}")
+    (specs / "b.json").write_text("{}")
+    design = tmp_path / "design"
+    design.mkdir()
+    (design / "d.xml").write_text("<ODM/>")
+
+    job = CrfJob.build(crf=crf, output_dir=tmp_path / "out", specs=specs, design=design)
+    assert [p.name for p in job.specs] == ["a.json", "b.json"]
+    assert [p.name for p in job.design] == ["d.xml"]
+    assert str(job.mode) == "first_run"
+
+
+def test_a_config_makes_it_a_rerun(tmp_path):
+    crf = tmp_path / "blank.pdf"
+    crf.write_bytes(b"%PDF-1.4")
+    config = tmp_path / "aCRF_Config.xlsx"
+    config.write_bytes(b"stub")
+
+    job = CrfJob.build(crf=crf, output_dir=tmp_path / "out", config=config)
+    assert str(job.mode) == "rerun"
+
+
+def test_study_name_defaults_to_the_crf_filename(tmp_path):
+    crf = tmp_path / "STUDY999_blank.pdf"
+    crf.write_bytes(b"%PDF-1.4")
+    config = tmp_path / "c.xlsx"
+    config.write_bytes(b"stub")
+    job = CrfJob.build(crf=crf, output_dir=tmp_path / "out", config=config)
+    assert job.study_name == "STUDY999_blank"
+
+
+def test_unmapped_variables_ignore_annotated_ones():
+    merged = pd.DataFrame(
+        {
+            "PAGE_NO": [1, 2, 3],
+            "DS_OID": ["DM_FORM", "DM_FORM", "NT_FORM"],
+            "VAR_OID": ["SEX", "SEX", "COMMENT"],
+            "ATEXT": ["DM.SEX", "", ""],
+        }
+    )
+    unmapped = unmapped_variables(merged)
+    assert list(unmapped["RSRC_VAR"]) == ["COMMENT"]
