@@ -10,6 +10,7 @@ from __future__ import annotations
 import pandas as pd
 
 from .binding import bind_forms, normalise
+from .constants import METHOD_NOT_SUBMITTED, NOT_SUBMITTED_TEXT
 from .design import StudyDesign
 from .logging_utils import get_logger
 from .specs import SpecCatalog, domain_of
@@ -214,6 +215,38 @@ def _warn_on_ambiguous_variables(mappings: pd.DataFrame) -> None:
             "(annotations from all of them will be applied): %s",
             len(ambiguous), ", ".join(sorted(ambiguous.index[:10])),
         )
+
+
+def mark_not_submitted(merged: pd.DataFrame) -> pd.DataFrame:
+    """Annotate every collected field that carries no SDTM mapping.
+
+    FDA Study Data Technical Conformance Guide §4.1.4.6: "When data are
+    recorded on the CRF but are not submitted, the CRF should be annotated
+    with the text 'NOT SUBMITTED'."
+
+    That is per field, not per page. A field the EDC collects and the specs do
+    not map is exactly this case, so it is annotated rather than left blank.
+    """
+    result = merged.copy()
+    if result.empty or "VAR_OID" not in result.columns:
+        return result
+
+    collected = result["VAR_OID"].notna() & (result["VAR_OID"].astype(str).str.len() > 0)
+    on_a_form = result["DS_OID"].fillna("").astype(str).str.len() > 0
+    unannotated = result["ATEXT"].fillna("").astype(str).str.strip() == ""
+
+    targets = collected & on_a_form & unannotated
+    if not targets.any():
+        return result
+
+    result.loc[targets, "ATEXT"] = NOT_SUBMITTED_TEXT
+    result.loc[targets, "MATCH_METHOD"] = METHOD_NOT_SUBMITTED
+    result.loc[targets, "MATCH_CONFIDENCE"] = 1.0
+    result.loc[targets, "MATCH_NOTE"] = "collected on the CRF, not mapped to SDTM"
+
+    logger.info("Marked %d collected field(s) NOT SUBMITTED (no SDTM mapping)",
+                int(targets.sum()))
+    return result
 
 
 def unmapped_variables(merged: pd.DataFrame) -> pd.DataFrame:

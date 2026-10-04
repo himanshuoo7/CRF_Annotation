@@ -99,13 +99,20 @@ Work the causes in pipeline order; an early one explains everything after it.
 | Symptom | Cause |
 |---|---|
 | Every page NOT SUBMITTED | Form binding failed — the CRF's form names do not match the design |
+| Many fields NOT SUBMITTED | The specs map few of that form's fields; check the `unmap` sheet |
 | One domain missing entirely | No spec targets that form, or its `source_dataset` ≠ the form OID |
 | Annotations on the wrong form | Dataset scope fell back to variable-only matching; the log says so |
 | Fields skipped on a busy page | No free space; see `annotations_dropped` |
 | Nothing extracted at all | Scanned PDF with no text layer; OCR is out of scope |
 
-Pages that genuinely carry no submitted data are *supposed* to say NOT
-SUBMITTED. Do not treat every blank page as a fault.
+A field that is collected but not mapped is annotated `NOT SUBMITTED` beside
+the field — FDA SDTCG §4.1.4.6 requires that wherever data are recorded but not
+submitted. So those are *correct output*, not a fault. Check them against the
+`unmap` sheet: if a field is marked NOT SUBMITTED that should have been mapped,
+the gap is in the mapping specs, not the tool.
+
+A whole page marked NOT SUBMITTED now means the page has no collected fields at
+all — a cover page or instructions — or that form binding failed.
 
 ## Matching tiers
 

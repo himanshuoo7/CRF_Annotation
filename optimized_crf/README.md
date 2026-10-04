@@ -157,13 +157,14 @@ version intact.
 ```json
 {
   "status": "ok",
-  "acrf": "/…/aCRF.pdf",
+  "acrf": "/…/acrf.pdf",
   "config": "/…/aCRF_Config.xlsx",
   "study": "STUDY123",
   "mode": "first_run",
   "study_design_source": "CDISC ODM-XML",
   "pages": 42, "forms": 18, "fields": 640,
   "annotations": 601, "annotations_dropped": 0,
+  "not_submitted": 12,
   "match_methods": {"exact": 574, "fuzzy": 19, "claude": 8},
   "needs_review": 27,
   "unmapped_variables": 12

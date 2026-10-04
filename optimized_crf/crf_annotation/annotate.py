@@ -118,6 +118,8 @@ class CrfRenderer:
         """Stable colour per domain, in order of first appearance on the page."""
         palette: dict[str, tuple[float, float, float]] = {}
         for _, row in rows.iterrows():
+            if str(row.get("A_TEXT") or "").strip() == NOT_SUBMITTED_TEXT:
+                continue          # not a domain; must not consume a colour
             domain = annotation_domain(row)
             if domain and domain not in palette:
                 palette[domain] = DOMAIN_COLORS[len(palette) % len(DOMAIN_COLORS)]
@@ -139,6 +141,13 @@ class CrfRenderer:
 
         is_header = row.get("ANNOTATION_TYPE") == ANNOTATION_HEADER
         x0, y0, x1, y1 = self._to_pdf_space(rect, page_height, is_header)
+
+        if text == NOT_SUBMITTED_TEXT:
+            # Collected but not submitted: grey and dotted, so it reads as the
+            # absence of a mapping rather than as one more domain.
+            return self._add_box(page, text, (x0, y0, x1, y1),
+                                 NOT_SUBMITTED_COLOR, is_header, dashes=_DOTTED)
+
         colour = palette.get(annotation_domain(row), DOMAIN_COLORS[0])
         return self._add_box(page, text, (x0, y0, x1, y1), colour, is_header)
 

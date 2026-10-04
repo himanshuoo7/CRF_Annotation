@@ -79,6 +79,10 @@ class MatchingOptions:
     model: Optional[str] = None
     effort: Optional[str] = None
     cache_dir: Optional[PathLike] = None
+    mark_not_submitted: bool = True
+    """Annotate collected fields that carry no SDTM mapping with the text
+    `NOT SUBMITTED`, as FDA SDTCG §4.1.4.6 requires. Off only if your review
+    process marks them some other way."""
     include_derived: bool = False
     """Annotate SDTM targets that are derived or assigned rather than
     collected (`USUBJID`, `--SEQ`, `EPOCH`). Off by default — CDISC

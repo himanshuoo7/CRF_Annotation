@@ -28,7 +28,9 @@ HEADER_GAP_X: Final = 2.0
 HEADER_GAP_Y: Final = 3.0
 FIELD_GAP_X: Final = 10.0
 
-NOT_SUBMITTED_TEXT: Final = "[NOT SUBMITTED]"
+# FDA Study Data Technical Conformance Guide §4.1.4.6: "the CRF should be
+# annotated with the text 'NOT SUBMITTED'". Exactly that text, unbracketed.
+NOT_SUBMITTED_TEXT: Final = "NOT SUBMITTED"
 FORM_PREFIX: Final = "Form: "
 EMPTY_POS: Final = "[0,0,0,0]"
 
@@ -76,8 +78,14 @@ ANNOTATION_FIELD: Final = "Field"
 # that end up with nothing submitted.
 ANNOTATION_FORM: Final = "Form"
 
+# Match method recorded for a field that is collected but deliberately not
+# submitted. Not a match, so it is not part of the review burden.
+METHOD_NOT_SUBMITTED: Final = "not_submitted"
+
 # --- Output naming ---------------------------------------------------------
-OUTPUT_PDF_NAME: Final = "aCRF.pdf"
+# §4.1.4.6: "The aCRF should be provided as a PDF with the file name
+# 'acrf.pdf.'" Lower case, exactly — it is the submitted filename.
+OUTPUT_PDF_NAME: Final = "acrf.pdf"
 OUTPUT_CONFIG_NAME: Final = "aCRF_Config.xlsx"
 LOG_FILE_NAME: Final = "aCRF_logs.log"
 

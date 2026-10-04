@@ -9,6 +9,7 @@ from pypdf import PdfReader
 
 from crf_annotation import (
     InputError,
+    MatchingOptions,
     PipelineError,
     annotate_crf,
 )
@@ -52,8 +53,9 @@ def test_first_run_produces_pdf_and_workbook(study):
     assert "DM.BRTHDTC" in drawn[1] and "DM (Demographics)" in drawn[1]
     assert "AE.AETERM" in drawn[2]
     assert "SUPPAE.QVAL where QNAM = AESEV" in drawn[2]
-    # Page 3 has a form but no mappings.
-    assert drawn[3] == ["[NOT SUBMITTED]"]
+    # Page 3 has a form whose only field carries no mapping, so that field is
+    # annotated NOT SUBMITTED individually.
+    assert drawn[3] == ["NOT SUBMITTED"]
 
 
 def test_workspace_is_removed(study):
@@ -242,3 +244,108 @@ def test_derived_variables_are_not_annotated(study):
 
     assert any("AE.AETERM" in t for t in drawn)        # collected: annotated
     assert not any("AESEQ" in t for t in drawn)        # derived: not
+
+
+# --- FDA Study Data Technical Conformance Guide 4.1.4.6 -------------------
+def test_output_filename_is_exactly_acrf_pdf(study):
+    """"The aCRF should be provided as a PDF with the file name 'acrf.pdf.'"""
+    result = annotate_crf(**study["job"])
+
+    assert result.acrf.name == "acrf.pdf"
+    assert result.acrf.name == result.acrf.name.lower()
+    assert result.acrf.is_file()
+
+
+def test_not_submitted_text_is_unbracketed(study):
+    """"the CRF should be annotated with the text 'NOT SUBMITTED.'"""
+    annotate_crf(**study["job"])
+    drawn = [t for page in annotations(study["out"] / OUTPUT_PDF_NAME).values() for t in page]
+
+    assert "NOT SUBMITTED" in drawn
+    assert not any(t.startswith("[") for t in drawn)
+
+
+def _partially_mapped_study(study):
+    """A form with three mapped fields and two collected-but-unmapped ones."""
+    import json
+
+    import pymupdf
+
+    crf = study["root"] / "partial.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((60, 100), "Form: Demographics", fontsize=12)
+    y = 150
+    for label in ["Date of Birth", "Sex", "Race", "Interviewer initials", "Was form completed?"]:
+        page.insert_text((60, y), label, fontsize=10)
+        y += 40
+    doc.save(str(crf))
+    doc.close()
+
+    meta = study["meta"] / "source_metadata_test.json"
+    design = json.loads(meta.read_text())
+    design["fields"] += [
+        {"form": "DM_FORM", "field": "INTINIT", "field_label": "Interviewer initials"},
+        {"form": "DM_FORM", "field": "FORMDONE", "field_label": "Was form completed?"},
+    ]
+    meta.write_text(json.dumps(design))
+    return dict(study["job"], crf=str(crf))
+
+
+def test_unmapped_fields_are_annotated_not_submitted(study):
+    """Per 4.1.4.6 this is per field, not a page-level banner."""
+    job = _partially_mapped_study(study)
+    result = annotate_crf(**job)
+
+    drawn = annotations(study["out"] / OUTPUT_PDF_NAME)[1]
+    assert "DM.BRTHDTC" in drawn                       # mapped: annotated
+    assert drawn.count("NOT SUBMITTED") == 2           # the two unmapped fields
+    assert result.not_submitted == 2
+
+
+def test_not_submitted_marks_sit_at_their_field(study):
+    """A per-field mark must be beside its field, not in the header band."""
+    job = _partially_mapped_study(study)
+    result = annotate_crf(**job)
+
+    import pandas as pd
+
+    coords = pd.read_excel(result.config, sheet_name="coordinates")
+    marks = coords[coords["ANNOTATION"] == "NOT SUBMITTED"]
+    assert len(marks) == 2
+    for pos in marks["LEFT_BOTTOM_RIGHT_TOP"]:
+        y0 = float(str(pos).strip("[]").split(",")[1])
+        assert y0 < 700, f"{pos} is in the header band, not beside a field"
+
+
+def test_unmap_sheet_still_reports_the_gap(study):
+    """Annotating NOT SUBMITTED must not hide which variables lack a mapping."""
+    import pandas as pd
+
+    job = _partially_mapped_study(study)
+    result = annotate_crf(**job)
+
+    unmapped = pd.read_excel(result.config, sheet_name="unmap")
+    assert set(unmapped["RSRC_VAR"]) == {"INTINIT", "FORMDONE"}
+    assert result.unmapped_variables == 2
+
+
+def test_not_submitted_is_not_counted_as_needing_review(study):
+    """It is a deliberate statement, not a guessed match."""
+    job = _partially_mapped_study(study)
+    result = annotate_crf(**job)
+
+    assert result.not_submitted == 2
+    assert result.needs_review == 0
+    assert result.match_methods["not_submitted"] == 2
+
+
+def test_marking_can_be_switched_off(study):
+    job = _partially_mapped_study(study)
+    job["matching"] = MatchingOptions(ai=False, mark_not_submitted=False)
+    result = annotate_crf(**job)
+
+    drawn = annotations(study["out"] / OUTPUT_PDF_NAME)[1]
+    assert "NOT SUBMITTED" not in drawn
+    assert result.not_submitted == 0
+    assert result.unmapped_variables == 2      # still recorded

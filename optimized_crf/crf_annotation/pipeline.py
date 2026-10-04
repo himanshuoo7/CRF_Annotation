@@ -19,7 +19,7 @@ from .config_workbook import (
     read_config_workbook,
     write_config_workbook,
 )
-from .constants import FILENAMES_SHEET, UNMAPPED_SHEET
+from .constants import FILENAMES_SHEET, METHOD_NOT_SUBMITTED, UNMAPPED_SHEET
 from .job import (
     BindingOptions,
     CrfAnnotationError,
@@ -32,7 +32,13 @@ from .job import (
 from .layout import place_annotations
 from .logging_utils import configure_logging, get_logger
 from .matching import refine
-from .merge import apply_annotations, build_form_fields, match_fields, unmapped_variables
+from .merge import (
+    apply_annotations,
+    build_form_fields,
+    mark_not_submitted,
+    match_fields,
+    unmapped_variables,
+)
 from .pdf_text import extract_items
 from .sources import load_study_design
 from .specs import SpecCatalog
@@ -58,6 +64,7 @@ class AnnotationResult:
     forms: int = 0
     fields: int = 0
     needs_review: int = 0
+    not_submitted: int = 0
     unmapped_variables: int = 0
     annotations_dropped: int = 0
     study_design_source: str = ""
@@ -77,6 +84,7 @@ class AnnotationResult:
             "annotations_dropped": self.annotations_dropped,
             "match_methods": self.match_methods,
             "needs_review": self.needs_review,
+            "not_submitted": self.not_submitted,
             "unmapped_variables": self.unmapped_variables,
         }
 
@@ -183,6 +191,13 @@ def _from_specs(job: CrfJob):
         min_confidence=job.matching.min_confidence,
     )
     annotated = apply_annotations(matched, catalog, dataset_scope=job.matching.dataset_scope)
+
+    # Record the mapping gap before filling it in, so the `unmap` sheet still
+    # reports which variables have no SDTM target.
+    unmapped = unmapped_variables(annotated)
+    if job.matching.mark_not_submitted:
+        annotated = mark_not_submitted(annotated)
+
     placed, stats = place_annotations(annotated, geometry)
 
     coordinates = build_coordinate_table(placed, catalog, geometry)
@@ -192,7 +207,6 @@ def _from_specs(job: CrfJob):
             "line up with the EDC form and field names."
         )
 
-    unmapped = unmapped_variables(placed)
     file_info = build_file_info({
         "Study_Design_System": [design.source_system],
         "Study_Design_File": job.design_names,
@@ -289,5 +303,9 @@ def _summarise(job, coordinates, unmapped, outputs, design_source, stats,
         unmapped_variables=int(len(unmapped)),
         annotations_dropped=stats.dropped if stats else 0,
         match_methods={k: int(v) for k, v in methods[methods != ""].value_counts().items()},
-        needs_review=int((~methods.isin(["", "exact", "reviewed"])).sum()),
+        not_submitted=int((methods == METHOD_NOT_SUBMITTED).sum()),
+        # A NOT SUBMITTED mark is a deliberate statement, not a guess, so it
+        # does not count toward the review burden.
+        needs_review=int((~methods.isin(
+            ["", "exact", "reviewed", METHOD_NOT_SUBMITTED])).sum()),
     )

@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--crf", required=True, metavar="PDF",
                         help="Blank CRF PDF (or a directory containing one)")
     parser.add_argument("--out", required=True, metavar="DIR",
-                        help="Where to write aCRF.pdf and aCRF_Config.xlsx")
+                        help="Where to write acrf.pdf and aCRF_Config.xlsx")
     parser.add_argument("--specs", nargs="*", metavar="PATH", default=None,
                         help="SDTM mapping spec JSON files, or a directory of them")
     parser.add_argument("--design", nargs="*", metavar="PATH", default=None,
@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--fuzzy-threshold", type=float, default=0.88)
     group.add_argument("--dataset-scope", choices=["auto", "strict", "off"], default="auto")
     group.add_argument("--model", default=None, help="Model id for the AI tier")
+    group.add_argument("--no-mark-not-submitted", action="store_true",
+                       help="Do not annotate unmapped collected fields with "
+                            "NOT SUBMITTED (FDA SDTCG 4.1.4.6 asks for it)")
     group.add_argument("--include-derived", action="store_true",
                        help="Also annotate derived/assigned SDTM variables "
                             "(USUBJID, --SEQ, EPOCH); off by default")
@@ -87,6 +90,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dataset_scope=args.dataset_scope,
                 model=args.model,
                 include_derived=args.include_derived,
+                mark_not_submitted=not args.no_mark_not_submitted,
             ),
             binding=BindingOptions(
                 banner_prefix=args.banner_prefix,
@@ -118,6 +122,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if result.needs_review:
             print(f"{result.needs_review} annotation(s) need review "
                   "(not an exact match) — see the config workbook")
+        if result.not_submitted:
+            print(f"{result.not_submitted} field(s) annotated NOT SUBMITTED")
         if result.unmapped_variables:
             print(f"{result.unmapped_variables} unmapped variable(s)")
         if result.annotations_dropped:

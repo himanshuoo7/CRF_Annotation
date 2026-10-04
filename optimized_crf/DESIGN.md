@@ -98,6 +98,19 @@ The catalogue drops them by default and logs what it dropped, so a spec that
 maps a derived variable does not silently produce a wrong annotation.
 `include_derived` overrides it for the rare build that genuinely needs one.
 
+## Every collected field gets an annotation
+
+A reviewer reading the aCRF should never have to wonder whether a blank field
+means "not submitted" or "we forgot". So a field the EDC collects and the
+specs do not map is annotated `NOT SUBMITTED` beside the field, in grey with a
+dotted border so it reads as the absence of a mapping rather than as another
+domain.
+
+That is what the FDA guide asks for, and it is also the honest behaviour: the
+tool already knew about those fields, and leaving them blank hid a known fact
+rather than reporting it. The `unmap` sheet still lists them, so a spec gap is
+still visible as a spec gap.
+
 ## Bookmarks preserve the reader's zoom
 
 Destinations are `/XYZ` with null left, top and zoom — "Inherit Zoom". The FDA

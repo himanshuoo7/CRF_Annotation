@@ -6,7 +6,7 @@ First release.
 
 ### Core
 
-- Annotate a blank CRF PDF with SDTM mappings, producing `aCRF.pdf`, its
+- Annotate a blank CRF PDF with SDTM mappings, producing `acrf.pdf`, its
   bookmark outline, and a reviewable `aCRF_Config.xlsx`.
 - Two modes: derive annotations from mapping specs and an EDC study design, or
   replay a reviewed config workbook including a reviewer's corrections.
@@ -48,6 +48,22 @@ First release.
 - Advisory lock against concurrent runs into one output directory.
 - Rotating logs; a 300-page study writes about 30 lines at `INFO`.
 
+### FDA conformance (Study Data Technical Conformance Guide §4.1.4.6)
+
+- The annotated PDF is named `acrf.pdf`, exactly as the guide specifies.
+- Fields that are collected on the CRF but carry no SDTM mapping are annotated
+  with the text `NOT SUBMITTED`, **per field**, beside the field itself. The
+  guide requires this wherever data are recorded but not submitted; a
+  page-level banner only covers pages with no collected fields at all.
+  Disable with `matching.mark_not_submitted` / `--no-mark-not-submitted`.
+- The annotation text is `NOT SUBMITTED`, unbracketed, as quoted in the guide.
+- `NOT SUBMITTED` marks are counted separately from `needs_review`: they are a
+  deliberate statement, not a guessed match. The `unmap` sheet still lists the
+  variables, so the mapping gap stays visible.
+
+Remember the guide also expects an explanation in the Reviewer's Guide of why
+those data were not submitted. That document is outside this tool.
+
 ### Conventions
 
 - Derived and assigned SDTM variables are not annotated. Exact names
@@ -64,6 +80,8 @@ First release.
 
 - **Not yet run against a real study.** Verified against synthetic fixtures and
   one live model call.
-- Producing the submission filename (`acrf.pdf`), the Reviewer's Guide, and
-  define.xml page linkage are out of scope.
+- The Reviewer's Guide and define.xml page linkage are out of scope.
+- Bookmark structure and Inherit Zoom follow the FDA eCTD PDF specification,
+  which is referenced from SDTCG footnote 51 but was not read directly when
+  this was implemented. Verify against that document before a submission.
 - Scanned CRFs with no text layer are not supported.
