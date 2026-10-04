@@ -86,11 +86,39 @@ LOG_FILE_NAME: Final = "aCRF_logs.log"
 DEFAULT_PDF_AUTHOR: Final = "crf-annotation"
 PDF_KEYWORDS: Final = "aCRF"
 
-# --- SDTM variables never annotated on a CRF ------------------------------
-IGNORED_VARIABLES: Final = frozenset(
+# --- SDTM variables that are never annotated on a CRF ---------------------
+# These are derived or assigned during dataset creation, not collected on the
+# form, so CDISC conventions say they are documented in define.xml with an
+# origin of Derived or Assigned rather than annotated. Annotating one is a
+# routine QC finding.
+#
+# A `--` prefix is the SDTM wildcard for the two-character domain code, so
+# `--SEQ` covers AESEQ, VSSEQ, LBSEQ and so on.
+DERIVED_VARIABLES: Final = frozenset(
     {
-        "STUDYID", "USUBJID", "SITEID", "DOMAIN", "ARMNRS", "ARMCD",
-        "ACTARMCD", "--SEQ", "--STRESC", "--STRESN", "--DY", "--STDY",
-        "--ENDY", "EPOCH",
+        "STUDYID", "USUBJID", "SUBJID", "SITEID", "DOMAIN", "RFSTDTC",
+        "RFENDTC", "ARMNRS", "ARMCD", "ACTARMCD", "EPOCH",
+        "--SEQ", "--STRESC", "--STRESN", "--STRESU",
+        "--DY", "--STDY", "--ENDY",
     }
 )
+
+_DERIVED_EXACT: Final = frozenset(v for v in DERIVED_VARIABLES if not v.startswith("--"))
+_DERIVED_SUFFIXES: Final = tuple(v[2:] for v in DERIVED_VARIABLES if v.startswith("--"))
+
+
+def is_derived_variable(name: object) -> bool:
+    """True when an SDTM variable is derived or assigned rather than collected.
+
+    Matches exact names (`USUBJID`) and the `--` domain-prefix convention,
+    where `--SEQ` means any two-character domain code followed by `SEQ`.
+    """
+    variable = str(name or "").strip().upper()
+    if not variable:
+        return False
+    if variable in _DERIVED_EXACT:
+        return True
+    return any(
+        variable.endswith(suffix) and len(variable) == len(suffix) + 2
+        for suffix in _DERIVED_SUFFIXES
+    )

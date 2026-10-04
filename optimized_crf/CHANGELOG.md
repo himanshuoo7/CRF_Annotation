@@ -48,16 +48,22 @@ First release.
 - Advisory lock against concurrent runs into one output directory.
 - Rotating logs; a 300-page study writes about 30 lines at `INFO`.
 
+### Conventions
+
+- Derived and assigned SDTM variables are not annotated. Exact names
+  (`USUBJID`, `STUDYID`, `EPOCH`, ...) and the `--` domain-prefix convention
+  (`--SEQ` covering `AESEQ`, `VSSEQ`, ...) are recognised and dropped from the
+  catalogue, with the dropped targets logged. CDISC documents those in
+  define.xml with an origin of Derived or Assigned instead. Override with
+  `matching.include_derived` or `--include-derived`.
+- Bookmark destinations use Inherit Zoom (`/XYZ` with null left, top and
+  zoom), as the FDA Study Data Technical Conformance Guide asks for, so
+  following a bookmark preserves the reader's magnification.
+
 ### Known limitations
 
 - **Not yet run against a real study.** Verified against synthetic fixtures and
   one live model call.
-- Derived and assigned SDTM variables (`USUBJID`, `--SEQ`, `EPOCH`, `--DY`) are
-  not filtered out. `IGNORED_VARIABLES` exists in `constants.py` but is not
-  wired in, so a spec that maps one would have it annotated — which CDISC
-  conventions say it should not be.
-- Bookmark destinations use `/Fit` rather than Inherit Zoom, which the FDA
-  Study Data Technical Conformance Guide asks for.
 - Producing the submission filename (`acrf.pdf`), the Reviewer's Guide, and
   define.xml page linkage are out of scope.
 - Scanned CRFs with no text layer are not supported.

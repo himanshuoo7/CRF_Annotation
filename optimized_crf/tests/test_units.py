@@ -216,3 +216,65 @@ def test_unmapped_variables_ignore_annotated_ones():
     )
     unmapped = unmapped_variables(merged)
     assert list(unmapped["RSRC_VAR"]) == ["COMMENT"]
+
+
+# --- derived / assigned SDTM variables are not annotated -------------------
+@pytest.mark.parametrize("variable", [
+    "USUBJID", "STUDYID", "SITEID", "DOMAIN", "EPOCH", "ARMCD",
+    "AESEQ", "VSSEQ", "LBSEQ",          # --SEQ
+    "LBSTRESC", "LBSTRESN", "VSSTRESU",  # --STRES*
+    "AESTDY", "AEENDY", "LBDY",          # --STDY / --ENDY / --DY
+    "usubjid", " AESEQ ",                # case and whitespace tolerant
+])
+def test_derived_variables_are_recognised(variable):
+    from crf_annotation.constants import is_derived_variable
+
+    assert is_derived_variable(variable) is True
+
+
+@pytest.mark.parametrize("variable", [
+    "AETERM", "BRTHDTC", "SEX", "RACE", "AESER", "VSORRES", "QVAL",
+    "AESTDTC", "LBORRES", "SEQUENCE",   # not --SEQ: wrong length
+    "DY", "", None,
+])
+def test_collected_variables_are_not_mistaken_for_derived(variable):
+    from crf_annotation.constants import is_derived_variable
+
+    assert is_derived_variable(variable) is False
+
+
+def _spec_with(variables, tmp_path):
+    import json
+
+    spec = {
+        "domain": {"dataset": "AE", "label": "Adverse Events",
+                   "functions": [{"source_dataset": "AE_FORM"}]},
+        "variables": [
+            {"dataset": "AE", "variable": v,
+             "functions": [{"function": "g_copy",
+                            "parameters": [{"name": "invar", "value": [f"RAW_{v}"]}]}]}
+            for v in variables
+        ],
+        "value_level": [],
+    }
+    path = tmp_path / "ae.json"
+    path.write_text(json.dumps(spec))
+    return [path]
+
+
+def test_catalogue_drops_derived_targets(tmp_path):
+    from crf_annotation.specs import SpecCatalog
+
+    catalog = SpecCatalog.load(_spec_with(["AETERM", "AESEQ", "USUBJID", "AESTDTC"], tmp_path))
+
+    assert set(catalog.mappings["TGT_VAR"]) == {"AETERM", "AESTDTC"}
+    assert catalog.derived_skipped == ("AE.AESEQ", "AE.USUBJID")
+
+
+def test_derived_targets_can_be_kept_deliberately(tmp_path):
+    from crf_annotation.specs import SpecCatalog
+
+    catalog = SpecCatalog.load(_spec_with(["AETERM", "AESEQ"], tmp_path), include_derived=True)
+
+    assert set(catalog.mappings["TGT_VAR"]) == {"AETERM", "AESEQ"}
+    assert catalog.derived_skipped == ()

@@ -51,6 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--fuzzy-threshold", type=float, default=0.88)
     group.add_argument("--dataset-scope", choices=["auto", "strict", "off"], default="auto")
     group.add_argument("--model", default=None, help="Model id for the AI tier")
+    group.add_argument("--include-derived", action="store_true",
+                       help="Also annotate derived/assigned SDTM variables "
+                            "(USUBJID, --SEQ, EPOCH); off by default")
 
     group = parser.add_argument_group("page/form binding")
     group.add_argument("--banner-prefix", default=None,
@@ -83,6 +86,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 fuzzy_threshold=args.fuzzy_threshold,
                 dataset_scope=args.dataset_scope,
                 model=args.model,
+                include_derived=args.include_derived,
             ),
             binding=BindingOptions(
                 banner_prefix=args.banner_prefix,

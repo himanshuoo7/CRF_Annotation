@@ -79,6 +79,10 @@ class MatchingOptions:
     model: Optional[str] = None
     effort: Optional[str] = None
     cache_dir: Optional[PathLike] = None
+    include_derived: bool = False
+    """Annotate SDTM targets that are derived or assigned rather than
+    collected (`USUBJID`, `--SEQ`, `EPOCH`). Off by default — CDISC
+    conventions document those in define.xml instead."""
 
 
 @dataclass

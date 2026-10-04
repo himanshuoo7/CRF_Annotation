@@ -194,3 +194,51 @@ def test_publishing_is_atomic(study, monkeypatch):
     # The previously published file is untouched, not half-overwritten.
     assert (study["out"] / OUTPUT_PDF_NAME).read_bytes() == good
     assert not list(study["out"].glob(".*staging"))
+
+
+def test_bookmarks_use_inherit_zoom(study):
+    """The FDA conformance guide asks for Inherit Zoom, not fit-whole-page."""
+    from pypdf import PdfReader
+
+    annotate_crf(**study["job"])
+    reader = PdfReader(str(study["out"] / OUTPUT_PDF_NAME))
+
+    checked = 0
+
+    def walk(items):
+        nonlocal checked
+        for item in items:
+            if isinstance(item, list):
+                walk(item)
+                continue
+            # `/XYZ` with left, top and zoom all null is Inherit Zoom: the
+            # viewer keeps the reader's current magnification. `/Fit` would
+            # re-zoom to the whole page on every jump.
+            assert item.raw_get("/Type") == "/XYZ", \
+                f"{item.title!r} uses {item.raw_get('/Type')}, not /XYZ"
+            for key in ("/Left", "/Top", "/Zoom"):
+                assert str(item.get(key)) == "NullObject", \
+                    f"{item.title!r} has {key}={item.get(key)!r}; Inherit Zoom needs null"
+            checked += 1
+
+    walk(reader.outline)
+    assert checked > 0
+
+
+def test_derived_variables_are_not_annotated(study):
+    """USUBJID and --SEQ are derived; CDISC says they belong in define.xml."""
+    import json
+
+    spec = json.loads((study["specs"] / "ae.json").read_text())
+    spec["variables"].append({
+        "dataset": "AE", "variable": "AESEQ",
+        "functions": [{"function": "g_copy",
+                       "parameters": [{"name": "invar", "value": ["AETERM"]}]}],
+    })
+    (study["specs"] / "ae.json").write_text(json.dumps(spec))
+
+    annotate_crf(**study["job"])
+    drawn = [t for page in annotations(study["out"] / OUTPUT_PDF_NAME).values() for t in page]
+
+    assert any("AE.AETERM" in t for t in drawn)        # collected: annotated
+    assert not any("AESEQ" in t for t in drawn)        # derived: not

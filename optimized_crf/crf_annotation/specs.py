@@ -16,11 +16,12 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
+from .constants import is_derived_variable
 from .logging_utils import get_logger
 
 logger = get_logger()
 
-MAPPING_COLUMNS = ["RSRC_DS", "RSRC_VAR", "TARGET_DS", "ATEXT"]
+MAPPING_COLUMNS = ["RSRC_DS", "RSRC_VAR", "TARGET_DS", "TGT_VAR", "ATEXT"]
 SUPP_PREFIX = "SUPP"
 _SUPP_LABEL_MARKER = "Supplemental Qualifiers for"
 
@@ -47,10 +48,19 @@ class SpecCatalog:
     domain_labels: dict[str, str] = field(default_factory=dict)
     source_to_target: dict[str, str] = field(default_factory=dict)
     spec_files: tuple[Path, ...] = ()
+    derived_skipped: tuple[str, ...] = ()
+    """SDTM targets dropped because they are derived rather than collected."""
 
     # -- loading ------------------------------------------------------------
     @classmethod
-    def load(cls, spec_files: Sequence[Path]) -> SpecCatalog:
+    def load(cls, spec_files: Sequence[Path], include_derived: bool = False) -> SpecCatalog:
+        """Read every spec file into one catalogue.
+
+        `include_derived` keeps mappings whose SDTM target is derived or
+        assigned (`USUBJID`, `--SEQ`, `EPOCH`, ...). They are dropped by
+        default: CDISC conventions document those in define.xml rather than
+        annotating them on the CRF, and annotating one is a QC finding.
+        """
         catalog = cls(spec_files=tuple(spec_files))
         rows: list[dict[str, str]] = []
         skipped: list[str] = []
@@ -68,6 +78,21 @@ class SpecCatalog:
         if rows:
             frame = pd.DataFrame(rows, columns=MAPPING_COLUMNS)
             frame = frame[frame["RSRC_VAR"].astype(bool)]
+
+            if not include_derived:
+                derived = frame["TGT_VAR"].map(is_derived_variable)
+                if derived.any():
+                    dropped = sorted({f"{ds}.{v}" for ds, v in
+                                      zip(frame.loc[derived, "TARGET_DS"],
+                                          frame.loc[derived, "TGT_VAR"])})
+                    catalog.derived_skipped = tuple(dropped)
+                    logger.info(
+                        "Not annotating %d derived/assigned SDTM target(s) — these "
+                        "belong in define.xml with origin Derived or Assigned: %s",
+                        len(dropped), ", ".join(dropped[:10]),
+                    )
+                    frame = frame[~derived]
+
             catalog.mappings = frame.drop_duplicates().reset_index(drop=True)
 
         logger.info(
@@ -217,7 +242,8 @@ def _variable_rows(variable: Mapping[str, Any], source: str, target: str) -> lis
         return []
     annotation = f"{target}.{name}"
     return [
-        {"RSRC_DS": source, "RSRC_VAR": var, "TARGET_DS": target, "ATEXT": annotation}
+        {"RSRC_DS": source, "RSRC_VAR": var, "TARGET_DS": target,
+         "TGT_VAR": name, "ATEXT": annotation}
         for var in _input_variables(variable.get("functions"))
     ]
 
@@ -238,6 +264,7 @@ def _supplemental_row(item: Mapping[str, Any], source: str, supp_dataset: str) -
         "RSRC_DS": source,
         "RSRC_VAR": source_var,
         "TARGET_DS": supp_dataset,
+        "TGT_VAR": "QVAL",
         "ATEXT": f"{supp_dataset}.QVAL where QNAM = {qnam}",
     }
 
@@ -255,7 +282,8 @@ def _value_level_rows(item: Mapping[str, Any], source: str, target: str) -> list
 
     annotation = f"{target}.{name} where {condition_var} = {condition_value}"
     rows = [
-        {"RSRC_DS": source, "RSRC_VAR": var, "TARGET_DS": target, "ATEXT": annotation}
+        {"RSRC_DS": source, "RSRC_VAR": var, "TARGET_DS": target,
+         "TGT_VAR": name, "ATEXT": annotation}
         for var in _input_variables(item.get("functions"))
     ]
     if not rows:

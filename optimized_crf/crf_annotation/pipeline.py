@@ -162,7 +162,7 @@ def run(job: CrfJob) -> AnnotationResult:
 # --- first run -------------------------------------------------------------
 def _from_specs(job: CrfJob):
     design = load_study_design(job.require_design())
-    catalog = SpecCatalog.load(job.specs)
+    catalog = SpecCatalog.load(job.specs, include_derived=job.matching.include_derived)
     if catalog.mappings.empty:
         raise PipelineError(
             "No usable mappings found in the spec files; nothing could be annotated"

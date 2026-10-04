@@ -30,6 +30,13 @@ def _collapse(writer: PdfWriter, bookmark) -> None:
     node[generic.NameObject("/Count")] = generic.NumberObject(0)
 
 
+# `/XYZ null null null` is "Inherit Zoom": the viewer keeps the reader's
+# current magnification when following a bookmark. The FDA Study Data
+# Technical Conformance Guide asks for this; `/Fit` would re-zoom every jump
+# to fit the whole page, which makes annotations unreadable on a dense CRF.
+INHERIT_ZOOM = Fit.xyz(left=None, top=None, zoom=None)
+
+
 def _add(writer: PdfWriter, title: str, page: int, parent=None):
     return writer.add_outline_item(
         title=str(title),
@@ -38,7 +45,7 @@ def _add(writer: PdfWriter, title: str, page: int, parent=None):
         color=None,
         bold=False,
         italic=False,
-        fit=Fit.fit(),
+        fit=INHERIT_ZOOM,
     )
 
 

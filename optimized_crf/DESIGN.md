@@ -86,6 +86,25 @@ a prominent warning when they do not, because some builds genuinely name them
 differently and a strict join would annotate nothing at all. `strict` and
 `off` force either behaviour.
 
+## Only collected variables are annotated
+
+An aCRF labels what the *form captures*. Variables that are derived or
+assigned during dataset creation — `USUBJID`, `--SEQ`, `EPOCH`, `--DY` — are
+not collected anywhere on the page, so CDISC conventions document them in
+define.xml with an origin of Derived or Assigned rather than annotating them.
+Annotating one is a routine QC finding.
+
+The catalogue drops them by default and logs what it dropped, so a spec that
+maps a derived variable does not silently produce a wrong annotation.
+`include_derived` overrides it for the rare build that genuinely needs one.
+
+## Bookmarks preserve the reader's zoom
+
+Destinations are `/XYZ` with null left, top and zoom — "Inherit Zoom". The FDA
+Study Data Technical Conformance Guide asks for this. The alternative, `/Fit`,
+re-zooms to the whole page on every jump, which on a dense CRF makes the
+annotations too small to read.
+
 ## Failures fail
 
 A run that cannot produce a correct aCRF raises. It does not return a
