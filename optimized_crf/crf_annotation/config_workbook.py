@@ -47,24 +47,68 @@ def header_width(text: str) -> float:
     return len(str(text)) * HEADER_CHAR_WIDTH + 2 * HEADER_GAP_X
 
 
+_BANNER_ROWS = 8      # rows below the top margin a banner may move down to
+
+
+def _overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
 def header_rows_for_page(page_no: int, texts: Sequence[str], page_width: float, page_height: float,
-                         ds_oid: object = "", itm_text: object = "", ds_name: object = "") -> list[dict[str, object]]:
-    """Domain banners for one page, laid out left to right with wrap."""
+                         ds_oid: object = "", itm_text: object = "", ds_name: object = "",
+                         obstacles: Sequence[tuple[float, float, float, float]] = ()) -> list[dict[str, object]]:
+    """Domain banners for one page, left to right along the top.
+
+    A banner goes in the first spot that covers neither the page's own
+    printed text (a form title, a header box) nor an annotation, scanning
+    right along a row and then a row lower; only if the top of the page has
+    no room at all does it fall back to the top-left corner.
+    """
+    taken = list(obstacles)
     rows: list[dict[str, object]] = []
-    x = HEADER_LEFT_MARGIN
-    top = page_height - HEADER_TOP_MARGIN
     for text in texts:
         width = header_width(text)
-        if x + width > page_width - HEADER_RIGHT_MARGIN and x > HEADER_LEFT_MARGIN:
+        spot = None
+        top = page_height - HEADER_TOP_MARGIN
+        for _ in range(_BANNER_ROWS):
             x = HEADER_LEFT_MARGIN
+            while x + width <= page_width - HEADER_RIGHT_MARGIN:
+                rect = (x, top - HEADER_ROW_HEIGHT, x + width, top)
+                blocking = [other for other in taken if _overlaps(rect, other)]
+                if not blocking:
+                    spot = rect
+                    break
+                x = max(x + 1.0, max(other[2] for other in blocking) + HEADER_GAP_X)
+            if spot:
+                break
             top -= HEADER_ROW_HEIGHT + HEADER_GAP_Y
+        if spot is None:
+            top = page_height - HEADER_TOP_MARGIN
+            spot = (HEADER_LEFT_MARGIN, top - HEADER_ROW_HEIGHT, HEADER_LEFT_MARGIN + width, top)
+        taken.append(spot)
         rows.append({
             "PAGE_NO": page_no, "DS_OID": ds_oid, "ITM_TEXT": itm_text, "DS_NAME": ds_name,
-            "POS1": format_pos(x, top - HEADER_ROW_HEIGHT, x + width, top),
-            "A_TEXT": text, "ANNOTATION_TYPE": ANNOTATION_HEADER,
+            "POS1": format_pos(*spot), "A_TEXT": text, "ANNOTATION_TYPE": ANNOTATION_HEADER,
         })
-        x += width + HEADER_GAP_X
     return rows
+
+
+def page_obstacles(page_rows: pd.DataFrame) -> list[tuple[float, float, float, float]]:
+    """Printed text and placed annotation boxes on one page."""
+    rects: list[tuple[float, float, float, float]] = []
+    if {"X0", "Y0", "X1", "Y1"} <= set(page_rows.columns):
+        coords = page_rows[["X0", "Y0", "X1", "Y1"]].apply(pd.to_numeric, errors="coerce").dropna()
+        rects.extend(tuple(v) for v in coords.to_numpy())
+    if "POS1" in page_rows.columns:
+        for value in page_rows["POS1"].astype(str):
+            parts = value.strip("[]").split(",")
+            try:
+                rect = tuple(float(v) for v in parts)
+            except ValueError:
+                continue
+            if len(rect) == 4 and rect[2] > rect[0]:
+                rects.append(rect)
+    return rects
 
 
 def build_header_rows(
@@ -95,6 +139,7 @@ def build_header_rows(
 
         rows.extend(header_rows_for_page(
             page_no, [catalog.header_text(domain) for domain in domains], page_width, page_height,
+            obstacles=page_obstacles(merged[merged["PAGE_NO"] == page_no]),
             ds_oid="" if banner is None else banner.get("DS_OID", ""),
             itm_text="" if banner is None else banner.get("ITM_TEXT", ""),
             ds_name="" if banner is None else banner.get("DS_NAME", ""),

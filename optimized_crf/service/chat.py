@@ -29,7 +29,12 @@ import pandas as pd
 from crf_annotation import annotate_crf
 from crf_annotation.ai.propose_specs import DOMAIN_LABELS
 from crf_annotation.annotate import parse_pos
-from crf_annotation.config_workbook import header_rows_for_page, read_config_workbook, write_config_workbook
+from crf_annotation.config_workbook import (
+    header_rows_for_page,
+    page_obstacles,
+    read_config_workbook,
+    write_config_workbook,
+)
 from crf_annotation.constants import (
     ANNOTATION_FIELD,
     ANNOTATION_HEADER,
@@ -168,7 +173,8 @@ class _Page:
         return format_pos(*rect) if rect else None
 
 
-def _relayout_headers(coordinates: pd.DataFrame, page: int, geometry: PageGeometry) -> pd.DataFrame:
+def _relayout_headers(coordinates: pd.DataFrame, page: int, geometry: PageGeometry,
+                      page_items: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """Banners follow the page's annotations: one per domain still on it."""
     types = coordinates["ANNOTATION_TYPE"].astype(str)
     on_page = coordinates["PAGE_NO"].astype(int) == page
@@ -178,8 +184,11 @@ def _relayout_headers(coordinates: pd.DataFrame, page: int, geometry: PageGeomet
     domains = sorted({d for d in fields["A_TEXT"].map(domain_of) if d})
     texts = [labels.get(d) or f"{d} ({DOMAIN_LABELS.get(d, d)})" for d in domains]
     template = old.iloc[0] if not old.empty else (fields.iloc[0] if not fields.empty else None)
+    obstacles = page_obstacles(fields)
+    if page_items is not None and not page_items.empty:
+        obstacles += page_obstacles(page_items[page_items["PAGE_NO"] == page])
     rows = header_rows_for_page(
-        page, texts, geometry.width(page), geometry.height(page),
+        page, texts, geometry.width(page), geometry.height(page), obstacles=obstacles,
         ds_oid="" if template is None else template.get("DS_OID", ""),
         itm_text="" if template is None else template.get("ITM_TEXT", ""),
         ds_name="" if template is None else template.get("DS_NAME", ""),
@@ -291,9 +300,9 @@ def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any
                             "annotation": current, "position": position})
 
     if touched:
-        geometry = (page or _Page(root)).geometry
+        page = page or _Page(root)
         for page_no in sorted(touched):
-            coordinates = _relayout_headers(coordinates, page_no, geometry)
+            coordinates = _relayout_headers(coordinates, page_no, page.geometry, page.items)
         # the workbook's own order: per page, form rows, then banners, then fields
         rank = coordinates["ANNOTATION_TYPE"].astype(str).map({ANNOTATION_HEADER: 1, ANNOTATION_FIELD: 2}).fillna(0)
         order = pd.DataFrame({"page": coordinates["PAGE_NO"].astype(int), "rank": rank,
