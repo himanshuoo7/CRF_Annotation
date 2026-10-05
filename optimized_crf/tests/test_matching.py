@@ -493,3 +493,23 @@ def test_a_label_wrapped_over_two_lines_matches_exactly():
     assert by_text["ECG Rhythm Sinus bradycardia (heart"] == "BRADY4050"
     assert by_text["rate 40-50 beats/min)"] == "BRADY4050"
     assert pd.isna(by_text["Yes"])
+
+
+def test_a_separator_line_is_not_joined_into_the_label_below_it():
+    from crf_annotation.merge import build_form_fields, match_fields
+
+    design = build(
+        "test",
+        forms=[Form(oid="IE_FORM", label="Eligibility", order=0)],
+        fields=[Field(oid="ALLMET", form_oid="IE_FORM", label="Did the subject meet all the entry criteria?")],
+    )
+    items = _items([
+        (1, "Eligibility", 60, 740, 200, 752),
+        (1, "_", 60, 612, 66, 622),
+        (1, "Did the subject meet all the entry", 60, 600, 230, 611),
+        (1, "criteria?", 60, 588, 110, 599),
+    ])
+    matched = match_fields(items, build_form_fields(design), design)
+    by_text = dict(zip(matched["ITM_TEXT"], matched["VAR_OID"]))
+    assert pd.isna(by_text["_"])
+    assert by_text["Did the subject meet all the entry"] == "ALLMET"

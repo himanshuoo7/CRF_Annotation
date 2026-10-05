@@ -98,6 +98,10 @@ _WRAP_GAP = 6.0       # max space between two lines of one wrapped label
 _WRAP_LINES = 6       # longest wrapped label tried (lines)
 
 
+def _has_words(text: object) -> bool:
+    return any(ch.isalnum() for ch in str(text or ""))
+
+
 def _join_wrapped_labels(merged: pd.DataFrame, fields: pd.DataFrame) -> pd.DataFrame:
     """Match a label the CRF wraps over several lines.
 
@@ -117,11 +121,12 @@ def _join_wrapped_labels(merged: pd.DataFrame, fields: pd.DataFrame) -> pd.DataF
         indices = list(lines.index)
         for start in range(len(indices)):
             first = indices[start]
-            if pd.notna(result.at[first, "VAR_OID"]):
-                continue
+            if pd.notna(result.at[first, "VAR_OID"]) or not _has_words(result.at[first, "ITM_TEXT"]):
+                continue  # a "_" separator above a question is not part of its label
             texts, rows = [str(result.at[first, "ITM_TEXT"])], [first]
             for following in indices[start + 1:start + _WRAP_LINES]:
-                if result.at[rows[-1], "Y0"] - result.at[following, "Y1"] > _WRAP_GAP:
+                if (result.at[rows[-1], "Y0"] - result.at[following, "Y1"] > _WRAP_GAP
+                        or not _has_words(result.at[following, "ITM_TEXT"])):
                     break
                 texts.append(str(result.at[following, "ITM_TEXT"]))
                 rows.append(following)
