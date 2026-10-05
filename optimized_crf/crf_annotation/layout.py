@@ -156,8 +156,9 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
                 break
             left = x1 + FIELD_GAP_X if drop == 0 else column_start
             # Beside the field means near it: sliding across into the next
-            # column would put the box beside a different field.
-            limit = min(right_limit, left + box_width + reach)
+            # column would put the box beside a different field. Rows below
+            # start in the field's own column and may run on past its options.
+            limit = min(right_limit, left + box_width + reach) if drop == 0 else right_limit
             while left + box_width <= limit:
                 candidate = (left, top, left + box_width, top + box_height)
                 if not occupancy.collides(candidate):
