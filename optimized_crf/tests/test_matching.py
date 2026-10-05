@@ -410,3 +410,50 @@ def test_layer_prefixes_are_stripped_when_comparing_datasets():
     ])
     out = apply_annotations(frame, catalog, dataset_scope="strict")
     assert set(out["ATEXT"]) == {"AE.AETERM"}
+
+
+def test_auto_scope_stays_strict_when_most_keys_line_up():
+    """A shared "Visit Date" item on every form, unmapped on one of them: the
+    stray miss must not switch the whole run to variable-name matching, or
+    every form's date annotation lands on every page."""
+    from crf_annotation.merge import apply_annotations
+
+    forms = ["DM_FORM", "AE_FORM", "VS_FORM", "CM_FORM", "LB_FORM"]
+    catalog = _catalog([
+        {"RSRC_DS": form, "RSRC_VAR": "VISDAT", "TARGET_DS": form[:2], "ATEXT": f"{form[:2]}.{form[:2]}DTC"}
+        for form in forms[:4]
+    ])
+    frame = pd.DataFrame([
+        {"PAGE_NO": page, "FORM_OID": form, "DS_OID": form, "VAR_OID": "VISDAT"}
+        for page, form in enumerate(forms, start=1)
+    ])
+    out = apply_annotations(frame, catalog)
+
+    assert len(out) == 5
+    assert set(out.loc[out["FORM_OID"] == "DM_FORM", "ATEXT"]) == {"DM.DMDTC"}
+    assert set(out.loc[out["FORM_OID"] == "LB_FORM", "ATEXT"]) == {""}
+
+
+# --- continuation pages -----------------------------------------------------
+def test_a_continuation_page_inherits_its_form_only_on_evidence():
+    design = build(
+        "test",
+        forms=[Form(oid="AE_FORM", label="Adverse Events", order=0)],
+        fields=[Field(oid=oid, form_oid="AE_FORM", label=label) for oid, label in
+                [("AETERM", "Adverse Event Term"), ("AESTDT", "Start Date"),
+                 ("AEENDT", "End Date"), ("AESER", "Serious?")]],
+    )
+    items = _items([
+        (1, "Adverse Events", 60, 740, 200, 752),         # names the form
+        (1, "Adverse Event Term", 60, 600, 200, 612),
+        (2, "Page 2 of 3", 60, 740, 200, 752),            # continuation, no name
+        (2, "End Date", 60, 600, 200, 612),
+        (2, "Serious?", 60, 560, 200, 572),
+        (3, "Study title page", 60, 740, 200, 752),       # cover sheet: no labels
+        (3, "Protocol LPL107988", 60, 600, 200, 612),
+        (4, "Start Date", 60, 740, 200, 752),             # after a gap: stays unbound
+        (4, "End Date", 60, 600, 200, 612),
+    ])
+    bound = bind_forms(items, design)
+    by_page = bound.groupby("PAGE_NO")["FORM_OID"].first().to_dict()
+    assert by_page == {1: "AE_FORM", 2: "AE_FORM", 3: "", 4: ""}

@@ -24,6 +24,7 @@ logger = get_logger()
 
 BINDING_COLUMNS = ["FORM_OID", "FORM_LABEL"]
 _HEADER_BAND = 0.22   # fraction of page height treated as the header zone
+_CARRY_EVIDENCE = 2   # field labels a page must share with the form it inherits
 
 
 def normalise(text: object) -> str:
@@ -147,11 +148,48 @@ class AutoBinder:
             return self.fallback.bind(items, design)
 
         logger.info("Using form binder '%s' (%d/%d pages bound)", best_name, best_pages, total_pages)
+        best_result = carry_forward(items, design, best_result)
+        best_pages = items.loc[best_result.astype(bool), "PAGE_NO"].nunique()
         if best_pages < total_pages:
             unbound = sorted(set(items["PAGE_NO"]) - set(items.loc[best_result.astype(bool), "PAGE_NO"]))
             logger.info("Pages with no form binding (left unannotated): %s",
                         ", ".join(str(p) for p in unbound[:20]))
         return best_result
+
+
+def carry_forward(items: pd.DataFrame, design: StudyDesign, bound: pd.Series) -> pd.Series:
+    """A page that doesn't name its form continues the page before it.
+
+    Many CRFs print the form name only on a form's first page. An unbound page
+    inherits the previous page's form — but only when it shows that form's own
+    field labels, so cover sheets, link pages and instructions stay unbound.
+    """
+    labels: dict[str, set[str]] = {}
+    for item in design.fields:
+        labels.setdefault(item.form_oid, set()).add(normalise(item.label))
+
+    result = bound.astype(object).copy()
+    page_of = items["PAGE_NO"]
+    previous = ""
+    carried: list[int] = []
+    for page in sorted(page_of.unique()):
+        rows = page_of == page
+        current = next((oid for oid in result[rows] if oid), "")
+        if current:
+            previous = current
+            continue
+        if not previous:
+            continue
+        texts = set(items.loc[rows, "ITM_TEXT"].map(normalise))
+        if len(texts & labels.get(previous, set())) >= _CARRY_EVIDENCE:
+            result[rows] = previous
+            carried.append(int(page))
+        else:
+            previous = ""  # a gap (cover sheet, links) ends the form
+    if carried:
+        logger.info("Carried the form over to %d continuation page(s): %s",
+                    len(carried), ", ".join(str(p) for p in carried[:20]))
+    return result
 
 
 def bind_forms(

@@ -18,6 +18,7 @@ from .specs import SpecCatalog, domain_of
 logger = get_logger()
 
 _HTML_TAG = r"<[^>]*>"
+STRICT_SCOPE_SHARE = 0.8
 _LINE_BREAK = r"(?i)<\s*/?\s*br\s*/?\s*>"
 
 def build_form_fields(design: StudyDesign) -> pd.DataFrame:
@@ -189,9 +190,12 @@ def _choose_scope(result: pd.DataFrame, lookup: pd.DataFrame) -> str:
 
     if loose == 0:
         return "strict"
-    if qualified >= loose:
-        logger.info("Spec source datasets align with the EDC forms; "
-                    "matching on (dataset, variable)")
+    # Most matches lining up means the datasets *are* the forms; the few that
+    # do not are fields the specs simply leave unmapped on that form. Going
+    # loose for them would stamp every form's annotation on a shared field.
+    if qualified >= STRICT_SCOPE_SHARE * loose:
+        logger.info("Spec source datasets align with the EDC forms (%d of %d); "
+                    "matching on (dataset, variable)", qualified, loose)
         return "strict"
 
     logger.warning(

@@ -198,7 +198,11 @@ def _from_specs(job: CrfJob):
         resolvers=_resolvers(job),
         min_confidence=job.matching.min_confidence,
     )
-    annotated = apply_annotations(matched, catalog, dataset_scope=job.matching.dataset_scope)
+    # Proposed specs are keyed by form OID by construction, so a field only
+    # ever takes its own form's annotation — never a look-alike from another
+    # form that shares the same item (a reused "Visit Date", say).
+    scope = "strict" if proposed and job.matching.dataset_scope == "auto" else job.matching.dataset_scope
+    annotated = apply_annotations(matched, catalog, dataset_scope=scope)
 
     # Record the mapping gap before filling it in, so the `unmap` sheet still
     # reports which variables have no SDTM target.
