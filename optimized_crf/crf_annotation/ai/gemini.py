@@ -64,6 +64,8 @@ def request(
             response_mime_type="application/json",
             response_json_schema=dict(schema),
             thinking_config=types.ThinkingConfig(thinking_level=_THINKING_LEVELS.get(effort, "medium")),
+            # no tools are sent, so the SDK's automatic function calling is noise
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
     usage = getattr(response, "usage_metadata", None)
