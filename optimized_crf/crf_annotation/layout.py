@@ -120,6 +120,9 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
     return result, PlacementStats(placed=placed, dropped=dropped)
 
 
+_NEAR_REACH = 60.0   # how far a box may slide sideways before dropping a row
+
+
 def _item_rects(rows: pd.DataFrame) -> list[Rect]:
     frame = rows[["X0", "Y0", "X1", "Y1"]].apply(pd.to_numeric, errors="coerce").dropna()
     return [tuple(values) for values in frame.drop_duplicates().to_numpy()]
@@ -143,13 +146,19 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     # A question in the right-hand column has no room beside it; its box must
     # still land in that column, under it, not across the page beside another
     # field where a reviewer would read it as that field's annotation.
-    for column_start in (max(x0, _MIN_LEFT), _MIN_LEFT):
+    # A wide box (a SUPP-- QNAM) in a narrow right column starts further left
+    # so it still fits under its own question.
+    own_column = max(_MIN_LEFT, min(x0, right_limit - box_width))
+    for column_start, reach in ((own_column, _NEAR_REACH), (_MIN_LEFT, page_width)):
         for drop in range(_MAX_DROPS):
             top = y0 - drop * (box_height + 2.0)
             if top < 0:
                 break
             left = x1 + FIELD_GAP_X if drop == 0 else column_start
-            while left + box_width <= right_limit:
+            # Beside the field means near it: sliding across into the next
+            # column would put the box beside a different field.
+            limit = min(right_limit, left + box_width + reach)
+            while left + box_width <= limit:
                 candidate = (left, top, left + box_width, top + box_height)
                 if not occupancy.collides(candidate):
                     return candidate

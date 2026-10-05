@@ -291,3 +291,16 @@ def test_a_box_for_a_right_column_question_stays_in_that_column():
     rect = _place_one(row, _Occupancy([(400.0, 500.0, 590.0, 510.0)]), page_width=612.0, page_height=792.0)
     assert rect is not None
     assert rect[0] >= 400.0 and rect[1] < 500.0
+
+
+def test_a_box_does_not_slide_into_the_next_column():
+    import pandas as pd
+
+    from crf_annotation.layout import _Occupancy, _place_one
+
+    # middle-column field; the space beside it is taken, the right column is free
+    row = pd.Series({"X0": 210.0, "X1": 300.0, "Y0": 500.0, "Y1": 510.0, "ATEXT": "AE.AESEV"})
+    taken = _Occupancy([(210.0, 500.0, 300.0, 510.0), (300.0, 495.0, 400.0, 515.0)])
+    rect = _place_one(row, taken, page_width=612.0, page_height=792.0)
+    assert rect is not None
+    assert rect[0] < 400.0 and rect[1] < 500.0   # under it, not across in the next column
