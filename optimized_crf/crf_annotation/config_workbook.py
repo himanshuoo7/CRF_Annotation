@@ -48,6 +48,7 @@ def header_width(text: str) -> float:
 
 
 _BANNER_ROWS = 8      # rows below the top margin a banner may move down to
+_TOP_EDGE = 4.0       # last resort: just inside the top edge of the page
 
 
 def _overlaps(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
@@ -69,8 +70,11 @@ def header_rows_for_page(page_no: int, texts: Sequence[str], page_width: float, 
     for text in texts:
         width = header_width(text)
         spot = None
-        top = page_height - HEADER_TOP_MARGIN
-        for _ in range(_BANNER_ROWS):
+        # rows from the usual banner line downwards, then the strip above it
+        # at the very top of the page (above a title that fills the first rows)
+        tops = [page_height - HEADER_TOP_MARGIN - i * (HEADER_ROW_HEIGHT + HEADER_GAP_Y) for i in range(_BANNER_ROWS)]
+        tops.append(page_height - _TOP_EDGE)
+        for top in tops:
             x = HEADER_LEFT_MARGIN
             while x + width <= page_width - HEADER_RIGHT_MARGIN:
                 rect = (x, top - HEADER_ROW_HEIGHT, x + width, top)
@@ -81,7 +85,6 @@ def header_rows_for_page(page_no: int, texts: Sequence[str], page_width: float, 
                 x = max(x + 1.0, max(other[2] for other in blocking) + HEADER_GAP_X)
             if spot:
                 break
-            top -= HEADER_ROW_HEIGHT + HEADER_GAP_Y
         if spot is None:
             top = page_height - HEADER_TOP_MARGIN
             spot = (HEADER_LEFT_MARGIN, top - HEADER_ROW_HEIGHT, HEADER_LEFT_MARGIN + width, top)

@@ -96,37 +96,53 @@ def match_fields(
 
 _WRAP_GAP = 6.0       # max space between two lines of one wrapped label
 _WRAP_LINES = 6       # longest wrapped label tried (lines)
+_WRAP_INDENT = 45.0   # how far right a continuation line may start (after '2.5 ')
 
 
 def _has_words(text: object) -> bool:
     return any(ch.isalnum() for ch in str(text or ""))
 
 
+def _next_line(boxes: dict, index: int, first_x0: float, first_x1: float) -> int | None:
+    """The line right below `index` that could continue a label starting at first_x0."""
+    _, _, y0, _ = boxes[index]
+    # lower baseline, little or no gap (tight line spacing makes lines overlap)
+    below = [(box[2], other) for other, box in boxes.items()
+             if other != index and box[2] < y0 - 2.0 and y0 - box[3] <= _WRAP_GAP
+             and first_x0 - 2.0 <= box[0] <= first_x0 + _WRAP_INDENT and box[0] < first_x1]
+    return max(below)[1] if below else None
+
+
 def _join_wrapped_labels(merged: pd.DataFrame, fields: pd.DataFrame) -> pd.DataFrame:
     """Match a label the CRF wraps over several lines.
 
     "ECG Rhythm Sinus bradycardia (heart" / "rate 40-50 beats/min)" matches no
-    field line by line; joined, it matches exactly. Lines are joined when they
-    start at the same x and follow each other closely, and only when the
-    joined text is a label on that same form.
+    field line by line; joined, it matches exactly. A line continues the one
+    above it when it follows closely and starts at the same x or a little to
+    the right (a numbered question "2.5 What is the toxicity grade of the
+    adverse" wraps to an indented "event?"), and lines are only joined when
+    the result is a label on that same form.
     """
-    if merged.empty or not {"X0", "Y0", "Y1"} <= set(merged.columns):
+    if merged.empty or not {"X0", "X1", "Y0", "Y1"} <= set(merged.columns):
         return merged
     lookup = {(form, text): (oid, label) for form, text, oid, label in
               zip(fields["DS_OID"], fields["MATCH_TEXT"], fields["VAR_OID"], fields["VAR_TXT"])}
     result = merged.copy()
     joined_rows = 0
-    for _, page in result.groupby(["PAGE_NO", (result["X0"] // 4)], sort=False):
-        lines = page.sort_values("Y0", ascending=False)
-        indices = list(lines.index)
-        for start in range(len(indices)):
-            first = indices[start]
+    for _, page in result.groupby("PAGE_NO", sort=False):
+        boxes = {index: (float(row["X0"]), float(row["X1"]), float(row["Y0"]), float(row["Y1"]))
+                 for index, row in page[["X0", "X1", "Y0", "Y1"]].apply(pd.to_numeric, errors="coerce")
+                 .dropna().iterrows()}
+
+
+        for first in sorted(boxes, key=lambda i: -boxes[i][2]):
             if pd.notna(result.at[first, "VAR_OID"]) or not _has_words(result.at[first, "ITM_TEXT"]):
                 continue  # a "_" separator above a question is not part of its label
+            x0, x1 = boxes[first][0], boxes[first][1]
             texts, rows = [str(result.at[first, "ITM_TEXT"])], [first]
-            for following in indices[start + 1:start + _WRAP_LINES]:
-                if (result.at[rows[-1], "Y0"] - result.at[following, "Y1"] > _WRAP_GAP
-                        or not _has_words(result.at[following, "ITM_TEXT"])):
+            for _ in range(_WRAP_LINES - 1):
+                following = _next_line(boxes, rows[-1], x0, x1)
+                if following is None or not _has_words(result.at[following, "ITM_TEXT"]):
                     break
                 texts.append(str(result.at[following, "ITM_TEXT"]))
                 rows.append(following)

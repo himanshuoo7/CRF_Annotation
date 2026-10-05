@@ -577,3 +577,24 @@ def test_a_cut_off_gemini_answer_is_retried(tmp_path, monkeypatch):
     client = ClaudeClient(AiSettings(model="gemini-3.8-flash", cache_dir=tmp_path))
     client._client = SimpleNamespace(models=Models())
     assert client.json_call(system="s", user="u", schema={"type": "object"}) == {"ok": True}
+
+
+def test_a_numbered_question_wrapping_to_an_indented_line_matches_exactly():
+    from crf_annotation.merge import build_form_fields, match_fields
+
+    design = build(
+        "test",
+        forms=[Form(oid="AE_FORM", label="Adverse Events", order=0)],
+        fields=[Field(oid="AETOXGR", form_oid="AE_FORM", label="What is the toxicity grade of the adverse event?")],
+    )
+    items = _items([
+        (1, "Adverse Events", 47, 790, 160, 802),
+        (1, "2.5 What is the toxicity grade of the adverse", 48.5, 487, 290, 498),
+        (1, "event?", 74.8, 480.2, 105, 491.1),     # tight spacing: overlaps the line above
+        (1, "Mild (1)", 340, 508, 380, 519),
+    ])
+    matched = match_fields(items, build_form_fields(design), design)
+    by_text = dict(zip(matched["ITM_TEXT"], matched["VAR_OID"]))
+    assert by_text["2.5 What is the toxicity grade of the adverse"] == "AETOXGR"
+    assert by_text["event?"] == "AETOXGR"
+    assert pd.isna(by_text["Mild (1)"])

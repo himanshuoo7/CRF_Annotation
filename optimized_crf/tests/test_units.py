@@ -400,3 +400,16 @@ def test_a_box_does_not_drift_past_the_next_question():
     assert rect is not None
     assert rect[1] >= 655.9                                   # above the next question
     assert rect[3] - rect[1] >= THREE_LINE_HEIGHT - 0.5       # narrowed to three lines
+
+
+def test_a_domain_banner_avoids_the_page_title():
+    from crf_annotation.config_workbook import header_rows_for_page
+
+    page_w, page_h = 595.0, 842.0
+    title = (40.0, 790.0, 560.0, 815.0)            # a title across the top rows
+    rows = header_rows_for_page(1, ["CM (Concomitant Medications)"], page_w, page_h, obstacles=[title])
+    x0, y0, x1, y1 = (float(v) for v in rows[0]["POS1"].strip("[]").split(","))
+    assert not (x0 < title[2] and title[0] < x1 and y0 < title[3] and title[1] < y1)
+
+    clear = header_rows_for_page(1, ["CM (Concomitant Medications)"], page_w, page_h)
+    assert clear[0]["POS1"].startswith("[60.0, 797.0")   # nothing in the way: the usual top-left spot
