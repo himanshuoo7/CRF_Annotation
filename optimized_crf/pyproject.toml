@@ -43,3 +43,7 @@ select = ["E", "F", "W", "B", "UP", "SIM", "RET", "C4"]
 # UP006/UP035/UP007/UP045 rewrite typing.X to builtins/PEP 604, which this
 # package cannot adopt while it supports Python 3.9 at runtime.
 ignore = ["E501", "UP006", "UP035", "UP007", "UP045"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's parameter markers are meant to be called in defaults (service/app.py)
+extend-immutable-calls = ["fastapi.File", "fastapi.Header"]
