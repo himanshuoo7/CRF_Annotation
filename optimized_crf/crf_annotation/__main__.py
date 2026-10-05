@@ -57,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--include-derived", action="store_true",
                        help="Also annotate derived/assigned SDTM variables "
                             "(USUBJID, --SEQ, EPOCH); off by default")
+    group.add_argument("--propose-specs", action="store_true",
+                       help="With no --specs, draft SDTM mapping specs from the study "
+                            "design (rules, then the model); every proposal needs review")
 
     group = parser.add_argument_group("page/form binding")
     group.add_argument("--banner-prefix", default=None,
@@ -90,6 +93,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 dataset_scope=args.dataset_scope,
                 model=args.model,
                 include_derived=args.include_derived,
+                propose_specs=args.propose_specs,
                 mark_not_submitted=not args.no_mark_not_submitted,
             ),
             binding=BindingOptions(

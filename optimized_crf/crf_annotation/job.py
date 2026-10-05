@@ -87,6 +87,11 @@ class MatchingOptions:
     """Annotate SDTM targets that are derived or assigned rather than
     collected (`USUBJID`, `--SEQ`, `EPOCH`). Off by default — CDISC
     conventions document those in define.xml instead."""
+    propose_specs: bool = False
+    """With no mapping specs, draft them from the study design — CDISC rules
+    first, then the model (`ai/propose_specs.py`). Every proposal is written
+    out for review; off by default because a submission run should use
+    reviewed specs."""
 
 
 @dataclass
@@ -157,6 +162,9 @@ class CrfJob:
                     "specs. Pass design= (a Rave ALS workbook, a CDISC ODM-XML "
                     "export, or any format a registered adapter reads)."
                 )
+        elif design_files and matching is not None and matching.propose_specs:
+            # no specs: the pipeline drafts them from the design
+            mode = RunMode.FIRST_RUN
         else:
             raise InputError(
                 "Nothing to do: pass specs= and design= for a first run, or "

@@ -69,6 +69,9 @@ class AnnotationResult:
     annotations_dropped: int = 0
     study_design_source: str = ""
     match_methods: dict = field(default_factory=dict)
+    proposed_specs: dict = field(default_factory=dict)
+    """Set when the specs were drafted from the design: how many mappings were
+    proposed by rule and by model. Every one of them needs a reviewer."""
 
     def to_dict(self) -> dict:
         return {
@@ -86,6 +89,7 @@ class AnnotationResult:
             "needs_review": self.needs_review,
             "not_submitted": self.not_submitted,
             "unmapped_variables": self.unmapped_variables,
+            "proposed_specs": self.proposed_specs,
         }
 
 
@@ -170,7 +174,11 @@ def run(job: CrfJob) -> AnnotationResult:
 # --- first run -------------------------------------------------------------
 def _from_specs(job: CrfJob):
     design = load_study_design(job.require_design())
-    catalog = SpecCatalog.load(job.specs, include_derived=job.matching.include_derived)
+    spec_files = job.specs
+    proposed: dict = {}
+    if not spec_files:
+        spec_files, proposed = _propose_specs(job, design)
+    catalog = SpecCatalog.load(spec_files, include_derived=job.matching.include_derived)
     if catalog.mappings.empty:
         raise PipelineError(
             "No usable mappings found in the spec files; nothing could be annotated"
@@ -212,7 +220,7 @@ def _from_specs(job: CrfJob):
         "Study_Design_File": job.design_names,
         "Spec_File": job.spec_names,
     })
-    counts = {"forms": len(design.forms), "fields": len(design.fields)}
+    counts = {"forms": len(design.forms), "fields": len(design.fields), "proposed": proposed}
     return (coordinates, unmapped, file_info, design.visit_frame,
             design.source_system, stats, counts)
 
@@ -266,6 +274,34 @@ def _binder(options: BindingOptions):
     return AutoBinder(binders, fallback=fallback)
 
 
+def _ai_settings(job: CrfJob):
+    from .ai import AiSettings
+
+    options = job.matching
+    settings = AiSettings.from_env(model=options.model, effort=options.effort)
+    settings.enabled = bool(options.ai)
+    settings.cache_dir = Path(options.cache_dir) if options.cache_dir else (
+        (job.log_dir or job.output_dir) / "ai_cache"
+    )
+    return settings
+
+
+def _propose_specs(job: CrfJob, design):
+    """No specs given: draft them into `<out>/proposed_specs/` for review."""
+    from .ai.client import ClaudeClient
+    from .ai.propose_specs import propose_mappings, write_proposal
+
+    settings = _ai_settings(job)
+    client = ClaudeClient(settings) if settings.enabled and not job.matching.exact_only else None
+    proposal = propose_mappings(design, client)
+    if not proposal.mappings:
+        raise PipelineError(
+            "No mapping specs were given and none could be proposed from the study design"
+        )
+    files = write_proposal(proposal, job.output_dir / "proposed_specs")
+    return files, proposal.counts
+
+
 def _resolvers(job: CrfJob):
     options = job.matching
     if options.exact_only:
@@ -284,7 +320,7 @@ def _resolvers(job: CrfJob):
 
 # --- reporting -------------------------------------------------------------
 def _summarise(job, coordinates, unmapped, outputs, design_source, stats,
-               counts: Mapping[str, int]) -> AnnotationResult:
+               counts: Mapping) -> AnnotationResult:
     fields = coordinates[coordinates["ANNOTATION_TYPE"] == "Field"] \
         if "ANNOTATION_TYPE" in coordinates.columns else coordinates
     methods = fields["MATCH_METHOD"].astype(str) if "MATCH_METHOD" in fields.columns \
@@ -303,6 +339,7 @@ def _summarise(job, coordinates, unmapped, outputs, design_source, stats,
         unmapped_variables=int(len(unmapped)),
         annotations_dropped=stats.dropped if stats else 0,
         match_methods={k: int(v) for k, v in methods[methods != ""].value_counts().items()},
+        proposed_specs=dict(counts.get("proposed") or {}),
         not_submitted=int((methods == METHOD_NOT_SUBMITTED).sum()),
         # A NOT SUBMITTED mark is a deliberate statement, not a guess, so it
         # does not count toward the review burden.
