@@ -152,11 +152,12 @@ def test_rules_from_a_real_study_place_each_field_correctly():
     assert placed["SUBJ2"] == "DM.SUBJID"
     assert placed["DRUG"] == "CM.CMTRT"
     assert placed["WHY"] == "CM.CMINDC"                         # terse label: the rule places it
-    assert placed["ANYSAE"] == "AE.AESER"
-    assert "ANYCM" not in placed and "ANYAE" not in placed      # NOT SUBMITTED
     assert "BRADY" not in placed                                # not a vital-sign PULSE
-    # questions and long labels are the model's: rules matched them by accident
-    assert sorted(proposal.unmapped) == ["AE_FORM.ACN", "CM_FORM.ONG", "EG_FORM.BRADY"]
+    # questions and long labels are the model's (rules matched them by accident),
+    # including yes/no gates: only the model can tell "any medications?" (not
+    # submitted) from "any diuretics?" (CMOCCUR)
+    assert sorted(proposal.unmapped) == ["AE_FORM.ACN", "AE_FORM.ANYAE", "CM_FORM.ANYCM", "CM_FORM.ONG",
+                                         "EG_FORM.BRADY", "SAE_FORM.ANYSAE"]
 
 
 def test_the_same_question_on_two_forms_gets_the_same_code():
@@ -266,3 +267,31 @@ def test_an_invalid_answer_is_reported_unmapped_not_silently_skipped():
                                     "fields": [{"field_oid": "X", "domain": "", "kind": "finding", "variable": "LB ORRES",
                                                 "testcd": "X", "qnam": "", "confidence": 0.5, "reason": "?"}]}]})
     assert propose_mappings(design, client).unmapped == ["LB_FORM.X"]
+
+
+def test_an_invented_variable_is_asked_again_and_never_drawn():
+    """CMONGO looks plausible and does not exist: the model gets one more try."""
+    design = _design(("CM_FORM", "Concomitant Medication", [("ONG", "Is the medication ongoing?")]))
+
+    class Correcting(FakeClient):
+        def json_call(self, *, system, user, schema, cache_salt=None):
+            self.asked.append(user)
+            variable = "CMENRTPT" if "rejected" in user else "CMONGO"
+            return {"forms": [{"form_oid": "CM_FORM", "domain": "CM", "domain_label": "CM", "class": "INTERVENTIONS",
+                               "fields": [{"field_oid": "ONG", "domain": "", "kind": "variable", "variable": variable,
+                                           "testcd": "", "qnam": "", "confidence": 0.8, "reason": "ongoing"}]}]}
+
+    client = Correcting({})
+    proposal = propose_mappings(design, client)
+    assert [m.variable for m in proposal.mappings] == ["CMENRTPT"]
+    assert len(client.asked) == 2 and "CM.CMONGO is not an SDTM variable" in client.asked[1]
+
+
+def test_sdtm_names():
+    from crf_annotation.sdtm_names import is_standard_variable
+
+    for domain, variable in [("CM", "CMENRTPT"), ("CM", "CMOCCUR"), ("AE", "AESMIE"), ("DM", "SEX"), ("DM", "DTHDTC"),
+                             ("CO", "COVAL"), ("LB", "LBCLSIG"), ("DD", "DDORRES"), ("SUPPAE", "QVAL")]:
+        assert is_standard_variable(domain, variable), (domain, variable)
+    for domain, variable in [("CM", "CMONGO"), ("CM", "CMDOS"), ("CM", "CMDSTXT"), ("AE", "LBORRES"), ("VS", "SEX")]:
+        assert not is_standard_variable(domain, variable), (domain, variable)

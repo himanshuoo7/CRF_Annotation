@@ -27,6 +27,7 @@ from typing import Any, Optional, Sequence
 
 from ..design import StudyDesign
 from ..logging_utils import get_logger
+from ..sdtm_names import SUFFIXES, is_standard_variable
 
 logger = get_logger()
 
@@ -94,13 +95,6 @@ _IDENTIFIERS: Sequence[tuple[str, str]] = (
     (r"^(site|cent(er|re)|investigator site) ?(identifier|id|number|no\.?)?$", "SITEID"),
 )
 
-# "Did the subject experience any adverse events?" / "Were any medications
-# taken?" only gate the log rows below them: collected, not submitted. On an
-# SAE form the same question is the seriousness flag.
-_SCREENING_QUESTION = re.compile(r"^(did|were|was|has|have)\b.*\b(any|experience)\b", re.IGNORECASE)
-_SCREENED_DOMAINS = {"AE", "CM", "MH", "PR"}
-_SKIP = object()
-
 # findings tests: field label → TESTCD
 _TESTS: Sequence[tuple[str, str]] = (
     (r"systolic", "SYSBP"), (r"diastolic", "DIABP"), (r"^(pulse|heart rate)\b", "PULSE"),
@@ -165,11 +159,7 @@ def _form_domain(label: str) -> Optional[tuple[str, str, str]]:
 
 
 def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass: str) -> Any:
-    """A deterministic proposal for one field, `_SKIP` (not submitted), or None."""
-    if domain in _SCREENED_DOMAINS and _SCREENING_QUESTION.search(label.strip()):
-        if domain == "AE" and re.search(r"(?<!non-)(?<!non )\bserious\b", label, re.IGNORECASE):
-            return ProposedMapping(form_oid, field_oid, label, domain, "AESER", reason="SAE screening question")
-        return _SKIP
+    """A deterministic proposal for one field, or None."""
     if _is_question(label):
         # Label patterns are for terse EDC labels ("Event", "Start Date").
         # A full question ("What is the date the adverse event started?")
@@ -191,20 +181,9 @@ def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass:
     return None
 
 
-# Variable-name endings that SDTM prefixes with the domain code (--ORRES etc.).
-_PREFIXED_SUFFIXES = frozenset({
-    "ORRES", "ORRESU", "ORNRLO", "ORNRHI", "STRESC", "STRESN", "STRESU", "TESTCD", "TEST", "CAT", "SCAT",
-    "DTC", "STDTC", "ENDTC", "DY", "TPT", "ELTM", "DUR", "TERM", "DECOD", "MODIFY", "BODSYS", "TRT",
-    "DOSE", "DOSU", "DOSFRQ", "DOSFRM", "DOSTXT", "ROUTE", "INDC", "LOC", "LAT", "DIR", "POS", "METHOD",
-    "STAT", "REASND", "NRIND", "CLSIG", "EVAL", "SPEC", "SEV", "SER", "REL", "ACN", "ACNOTH", "OUT",
-    "PRESP", "OCCUR", "ENRF", "STRF", "ENRTPT", "STRTPT", "ENTPT", "STTPT", "PATT", "CONTRT", "TOX",
-    "TOXGR", "LLT", "HLT", "HLGT", "SOC", "PTCD", "LNKID", "GRPID", "REFID", "SPID", "LOBXFL", "BLFL",
-})
-
-
 def _domain_of_variable(variable: str) -> str:
     """`IEORRES` -> `IE`; '' when the name is not domain-prefixed (SEX, QVAL)."""
-    if len(variable) > 2 and variable[2:] in _PREFIXED_SUFFIXES and _DOMAIN.match(variable[:2]):
+    if len(variable) > 2 and variable[2:] in SUFFIXES and _DOMAIN.match(variable[:2]):
         return variable[:2]
     return ""
 
@@ -270,13 +249,24 @@ _SYSTEM = (
     "DSDTC, ...). A field may belong to a different domain from its form: the date of "
     "randomisation is DS.DSSTDTC (a disposition event), wherever it is collected. Set a field's "
     "domain only when it differs from its form's; otherwise leave it empty.\n"
+    "- Pre-specified questions: a yes/no question about one named medication, class, event or "
+    "procedure listed on the form ('Were any diuretics taken?', 'Has the subject had a "
+    "colonoscopy?') records whether it occurred: --OCCUR in that domain (CMOCCUR, MHOCCUR, "
+    "PROCCUR), and a reason it was not given is --REASOC or --REASND. A gate question that only "
+    "opens a free-text list below it ('Were any medications taken?', 'Did the subject experience "
+    "any adverse events?') is kind 'skip'; on a serious-adverse-event form that gate is AESER.\n"
+    "- Adverse events: the seriousness criteria are their own variables - AESCONG, AESDISAB, "
+    "AESDTH, AESHOSP, AESLIFE, AESMIE (other medically important), AESOD (overdose); toxicity "
+    "grade is AETOXGR, ongoing is AEENRTPT or AEENRF.\n"
+    "- Death: the details of a death (cause, location, witnessed, autopsy) are findings in DD "
+    "(DDORRES with a DDTESTCD such as PRCDTH, LOCDTH); the date of death is DM.DTHDTC.\n"
     "- Supplemental qualifiers: collected data with no standard variable is kind 'supp', with a "
     "QNAM of at most 8 characters.\n"
     "- Not submitted: kind 'skip' only for operational fields, such as 'Was the form completed?', "
-    "page status, or a yes/no question whose only purpose is to open the rows below it "
-    "('Were any medications taken?'). Collected clinical data is never skipped; if you are unsure, "
-    "map it and give a low confidence so a reviewer looks at it.\n"
-    "- Only use standard SDTM domains. Confidence is 0 to 1."
+    "page status, a CRF number, or the gate questions above. Collected clinical data is never "
+    "skipped; if you are unsure, map it and give a low confidence so a reviewer looks at it.\n"
+    "- Names: use only variable names that SDTMIG defines for the domain (CMDOSE, CMENRTPT - never "
+    "an invented one such as CMDOS or CMONGO), and only standard SDTM domains. Confidence is 0 to 1."
 )
 
 _SCHEMA: dict[str, Any] = {
@@ -339,7 +329,7 @@ def _batches(forms: list[dict[str, Any]], size: int = BATCH_FIELDS) -> list[list
     return batches
 
 
-def _ask_model(client: Any, forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _ask_model(client: Any, forms: list[dict[str, Any]], note: str = "") -> list[dict[str, Any]]:
     """Structured calls for every form still needing proposals, in batches."""
     if not forms or client is None or not client.available():
         return []
@@ -348,8 +338,9 @@ def _ask_model(client: Any, forms: list[dict[str, Any]]) -> list[dict[str, Any]]
         user = (
             "Propose SDTM mappings for these EDC forms and fields (labels as printed on the CRF):\n"
             + json.dumps(batch, indent=1)
+            + (f"\n\n{note}" if note else "")
         )
-        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/5")
+        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/6")
         return list((answer or {}).get("forms") or [])
 
     with ThreadPoolExecutor(max_workers=PARALLEL_CALLS) as pool:
@@ -375,8 +366,6 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
                                                      reason="subject/site identifier"))
             continue
         mapping = _rule_mapping(item.form_oid, item.oid, item.label, domain[0], domain[2]) if domain else None
-        if mapping is _SKIP:
-            continue  # collected, not submitted: annotated NOT SUBMITTED downstream
         if mapping:
             proposal.mappings.append(mapping)
         else:
@@ -392,48 +381,70 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
     ]
     answered: set[str] = set()
     field_labels = {(f.form_oid, f.oid): f.label for f in design.fields}
-    for form in _ask_model(client, request):
-        oid = str(form.get("form_oid") or "")
-        domain = str(form.get("domain") or "").upper()
-        if oid not in labels or not _DOMAIN.match(domain):
-            continue
-        proposal.domains.setdefault(oid, (domain, str(form.get("domain_label") or domain), str(form.get("class") or "")))
-        form_domain = proposal.domains[oid][0]
-        for entry in form.get("fields") or ():
-            # a field may be submitted in another domain (randomisation date -> DS)
-            own = str(entry.get("domain") or "").upper()
-            domain = own if _DOMAIN.match(own) else form_domain
-            # SDTM names carry their domain (IEORRES is IE): a variable never
-            # goes into another domain because of the form it sits on.
-            named = _domain_of_variable(str(entry.get("variable") or "").upper())
-            if named and entry.get("kind") in ("variable", "finding"):
-                domain = named
-            field_oid = str(entry.get("field_oid") or "")
-            if (oid, field_oid) not in field_labels:
+
+    def take(answers: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+        """Use the model's answers; return (form, field, why) for invalid ones."""
+        invalid: list[tuple[str, str, str]] = []
+        for form in answers:
+            oid = str(form.get("form_oid") or "")
+            domain = str(form.get("domain") or "").upper()
+            if oid not in labels or not _DOMAIN.match(domain):
                 continue
-            kind = entry.get("kind")
-            if kind == "skip":
-                answered.add(f"{oid}.{field_oid}")
-                continue
-            variable = str(entry.get("variable") or "").upper()
-            qnam = str(entry.get("qnam") or "").upper()
-            testcd = str(entry.get("testcd") or "").upper()
-            if kind == "supp":
-                if not _NAME.match(qnam):
-                    logger.warning("Ignored a proposal for %s.%s: QNAM %r is not a valid name", oid, field_oid, qnam)
+            proposal.domains.setdefault(oid, (domain, str(form.get("domain_label") or domain), str(form.get("class") or "")))
+            form_domain = proposal.domains[oid][0]
+            for entry in form.get("fields") or ():
+                # a field may be submitted in another domain (randomisation date -> DS)
+                own = str(entry.get("domain") or "").upper()
+                domain = own if _DOMAIN.match(own) else form_domain
+                # SDTM names carry their domain (IEORRES is IE): a variable never
+                # goes into another domain because of the form it sits on.
+                named = _domain_of_variable(str(entry.get("variable") or "").upper())
+                if named and entry.get("kind") in ("variable", "finding"):
+                    domain = named
+                field_oid = str(entry.get("field_oid") or "")
+                if (oid, field_oid) not in field_labels or f"{oid}.{field_oid}" in answered:
+                    continue  # unknown, or already answered (a model may repeat itself)
+                kind = entry.get("kind")
+                if kind == "skip":
+                    answered.add(f"{oid}.{field_oid}")
                     continue
-                variable = "QVAL"
-            elif not _NAME.match(variable) or (kind == "finding" and not _TESTCD.match(testcd)):
-                # left unanswered (not 'skipped'), so it is reported and can borrow a twin's mapping
-                logger.warning("Ignored a proposal for %s.%s: %r / testcd %r is not a valid SDTM name",
-                               oid, field_oid, variable, testcd)
-                continue
-            answered.add(f"{oid}.{field_oid}")
-            proposal.mappings.append(ProposedMapping(
-                oid, field_oid, field_labels[(oid, field_oid)], domain, variable,
-                testcd=testcd if kind == "finding" else "", qnam=qnam if kind == "supp" else "",
-                confidence=float(entry.get("confidence") or 0), reason=str(entry.get("reason") or ""), source="ai",
-            ))
+                variable = str(entry.get("variable") or "").upper()
+                qnam = str(entry.get("qnam") or "").upper()
+                testcd = str(entry.get("testcd") or "").upper()
+                if kind == "supp":
+                    if not _NAME.match(qnam):
+                        invalid.append((oid, field_oid, f"QNAM {qnam!r} is not a valid name"))
+                        continue
+                    variable = "QVAL"
+                elif not _NAME.match(variable) or (kind == "finding" and not _TESTCD.match(testcd)):
+                    invalid.append((oid, field_oid, f"{variable!r} / testcd {testcd!r} is not a valid name"))
+                    continue
+                elif not is_standard_variable(domain, variable):
+                    # a plausible-looking name SDTM does not have (CMONGO, CMDOS)
+                    invalid.append((oid, field_oid, f"{domain}.{variable} is not an SDTM variable"))
+                    continue
+                answered.add(f"{oid}.{field_oid}")
+                proposal.mappings.append(ProposedMapping(
+                    oid, field_oid, field_labels[(oid, field_oid)], domain, variable,
+                    testcd=testcd if kind == "finding" else "", qnam=qnam if kind == "supp" else "",
+                    confidence=float(entry.get("confidence") or 0), reason=str(entry.get("reason") or ""),
+                    source="ai",
+                ))
+        return invalid
+
+    invalid = take(_ask_model(client, request))
+    if invalid:
+        # One repair round: the same fields again, told what was wrong.
+        retry = {(oid, field) for oid, field, _ in invalid}
+        repair = [{**form, "fields": [f for f in form["fields"] if (form["form_oid"], f["field_oid"]) in retry]}
+                  for form in request]
+        repair = [form for form in repair if form["fields"]]
+        problems = "; ".join(f"{field}: {why}" for _, field, why in invalid[:40])
+        note = ("Earlier answers for these fields were rejected - " + problems + ". Use only variable "
+                "names that SDTMIG defines for the domain, and a valid QNAM for supplemental qualifiers.")
+        logger.info("Asking again for %d field(s) whose proposals were not valid SDTM", len(retry))
+        for oid, field, why in take(_ask_model(client, repair, note)):
+            logger.warning("Ignored a proposal for %s.%s: %s", oid, field, why)
 
     # A field the model left out of one batch is often answered for the same
     # question on another form (a 12-lead and a telemetry ECG form): reuse it.
