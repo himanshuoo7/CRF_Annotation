@@ -52,7 +52,7 @@ def test_first_run_produces_pdf_and_workbook(study):
     drawn = annotations(pdf)
     assert "DM.BRTHDTC" in drawn[1] and "DM (Demographics)" in drawn[1]
     assert "AE.AETERM" in drawn[2]
-    assert "SUPPAE.QVAL where QNAM = AESEV" in drawn[2]
+    assert "AESEV in SUPPAE" in drawn[2]
     # Page 3 has a form whose only field carries no mapping, so that field is
     # annotated NOT SUBMITTED individually.
     assert drawn[3] == ["NOT SUBMITTED"]

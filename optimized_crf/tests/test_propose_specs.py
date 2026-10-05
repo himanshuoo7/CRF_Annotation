@@ -111,7 +111,7 @@ def test_proposals_become_ordinary_spec_files_the_catalog_reads(tmp_path):
     texts = set(catalog.mappings["ATEXT"])
     assert "AE.AETERM" in texts
     assert "VS.VSORRES where VSTESTCD = SYSBP" in texts
-    assert "SUPPAE.QVAL where QNAM = AESEVX" in texts
+    assert "AESEVX in SUPPAE" in texts
     summary = json.loads((tmp_path / PROPOSAL_FILE).read_text())
     assert summary["counts"]["proposed"] == 3
     assert {"AE_FORM__AE", "VS_FORM__VS", "AE_FORM__SUPPAE"} <= set(to_spec_documents(proposal))

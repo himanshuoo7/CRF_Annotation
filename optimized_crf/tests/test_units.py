@@ -41,6 +41,8 @@ def test_strip_supp_and_domain_of():
     assert strip_supp("SUPPAE") == "AE"
     assert strip_supp("AE") == "AE"
     assert domain_of("SUPPAE.QVAL where QNAM = X") == "AE"
+    assert domain_of("AEFREQ in SUPPAE") == "AE"
+    assert domain_of("RACEOTH in SUPPDM") == "DM"
     assert domain_of("no dot here") == ""
 
 

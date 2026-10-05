@@ -10,6 +10,7 @@ lines and dominates the runtime.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
@@ -32,9 +33,15 @@ def strip_supp(dataset: str) -> str:
     return text[len(SUPP_PREFIX):] if text.startswith(SUPP_PREFIX) else text
 
 
+_IN_SUPP = re.compile(r"\bin (SUPP[A-Z0-9]{2,4})\s*$")
+
+
 def domain_of(annotation: str) -> str:
-    """Target domain encoded in an annotation such as `AE.AETERM`."""
+    """Target domain encoded in an annotation: `AE.AETERM`, `AEFREQ in SUPPAE`."""
     text = str(annotation or "")
+    supp = _IN_SUPP.search(text)
+    if supp:
+        return strip_supp(supp.group(1)).strip()
     if "." not in text:
         return ""
     return strip_supp(text.split(".", 1)[0]).strip()
@@ -265,7 +272,9 @@ def _supplemental_row(item: Mapping[str, Any], source: str, supp_dataset: str) -
         "RSRC_VAR": source_var,
         "TARGET_DS": supp_dataset,
         "TGT_VAR": "QVAL",
-        "ATEXT": f"{supp_dataset}.QVAL where QNAM = {qnam}",
+        # The CDISC metadata submission guideline's form: short enough to sit
+        # beside its question even in a narrow column.
+        "ATEXT": f"{qnam} in {supp_dataset}",
     }
 
 
