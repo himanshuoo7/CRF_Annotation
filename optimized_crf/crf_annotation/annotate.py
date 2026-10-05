@@ -30,6 +30,7 @@ from .constants import (
     NOT_SUBMITTED_TEXT,
 )
 from .logging_utils import get_logger
+from .layout import TWO_LINE_HEIGHT, two_lines
 from .specs import domain_of
 
 logger = get_logger()
@@ -185,8 +186,12 @@ class CrfRenderer:
     ) -> bool:
         font_size = HEADER_FONT_SIZE if is_header else FIELD_FONT_SIZE
         x0, top, x1, bottom = rect
+        # Layout gives a long annotation two lines in a narrow, tall box.
+        if not is_header and bottom - top >= TWO_LINE_HEIGHT - 0.5 and "\n" not in text:
+            lines = two_lines(text)
+            text = "\n".join(lines)
         # Centre the text band inside the reserved rectangle.
-        text_height = font_size * 1.35
+        text_height = font_size * 1.35 * (text.count("\n") + 1)
         offset = max(0.0, (bottom - top - text_height) / 2)
         box = pymupdf.Rect(x0, top + offset, x1, bottom - offset)
         if box.is_empty or box.is_infinite:
@@ -195,7 +200,7 @@ class CrfRenderer:
         try:
             annot = _create_freetext(page, box, text, font_size, colour)
             annot.set_border(width=_BORDER_WIDTH, dashes=list(dashes) if dashes else _SOLID)
-            annot.set_info(title=text)
+            annot.set_info(title=text.replace("\n", " "))
             _update_freetext(annot)
         except Exception as exc:  # noqa: BLE001 - one bad box must not kill the run
             logger.warning("Could not draw annotation %r at %s: %s", text, rect, exc)

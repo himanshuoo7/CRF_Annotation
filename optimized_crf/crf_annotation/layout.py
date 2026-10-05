@@ -63,6 +63,23 @@ def column_of(x0: float, edges: list[float], right_limit: float) -> tuple[float,
     return max(left, _MIN_LEFT), min(right, right_limit)
 
 
+TWO_LINE_HEIGHT = FIELD_ROW_HEIGHT * 1.8
+
+
+def two_lines(text: str) -> list[str]:
+    """A long annotation split for a narrow column: `IE.IEORRES` /
+    `where IETESTCD = INCL02`, else at the space nearest the middle."""
+    text = str(text)
+    if " where " in text:
+        head, tail = text.split(" where ", 1)
+        return [head, f"where {tail}"]
+    spaces = [i for i, c in enumerate(text) if c == " "]
+    if not spaces:
+        return [text]
+    cut = min(spaces, key=lambda i: abs(i - len(text) / 2))
+    return [text[:cut], text[cut + 1:]]
+
+
 def annotation_width(text: str) -> float:
     return len(str(text)) * FIELD_CHAR_WIDTH + _TEXT_PADDING
 
@@ -180,7 +197,13 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     right_limit = page_width - _MIN_LEFT
     col_left, col_right = column_of(x0, edges or [], right_limit)
     if col_right - col_left < box_width:
-        col_right = right_limit   # a box wider than its column may run on to the right
+        # Too wide for its column on one line: two lines, half the width.
+        lines = two_lines(row["ATEXT"])
+        if len(lines) == 2:
+            box_width = max(annotation_width(line) for line in lines)
+            box_height = max(TWO_LINE_HEIGHT, y1 - y0)
+        if col_right - col_left < box_width:
+            col_right = right_limit   # still too wide: it may run on to the right
 
     # A box beside or under its own question reads as that question's; one
     # across a column edge reads as the neighbour's.
