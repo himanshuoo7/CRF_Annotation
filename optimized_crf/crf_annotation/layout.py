@@ -34,6 +34,7 @@ Rect = tuple[float, float, float, float]
 _BAND = 24.0          # vertical bucket size for the collision index
 _MAX_DROPS = 6        # how many rows down we try before giving up
 _MIN_LEFT = 20.0      # never place an annotation in the binding margin
+_MIN_TOP = 4.0        # nor off the top edge of the page
 _TEXT_PADDING = 8.0   # the box border and its inner margin
 _BLOCKER_GAP = 4.0    # clearance after the text a box steps past
 _FINE_STEP = 5.0      # vertical search step
@@ -216,13 +217,17 @@ def place_box(anchor: pd.Series, text: str, page_items: pd.DataFrame, boxes: Ite
               page_width: float, page_height: float) -> Rect | None:
     """Place one annotation beside `anchor` (a printed line) on a page that
     already carries `boxes`: the same rules as a full run, for an edit."""
-    header_band = (0.0, page_height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, page_width, page_height)
+    # No band is held back for domain banners here: after an edit they are
+    # re-laid out around the page's text and boxes, this one included.
     boxes = list(boxes)
-    occupancy = _Occupancy([*_item_rects(page_items), *boxes, header_band])
+    occupancy = _Occupancy([*_item_rects(page_items), *boxes])
     wordy = page_items[page_items["ITM_TEXT"].map(_has_words)]
-    soft = _Occupancy([*_item_rects(wordy), *boxes, header_band])
+    soft = _Occupancy([*_item_rects(wordy), *boxes])
     row = pd.Series({"X0": anchor["X0"], "X1": anchor["X1"], "Y0": anchor["Y0"], "Y1": anchor["Y1"], "ATEXT": text})
-    return _place_one(row, occupancy, page_width, page_height, column_edges(page_items), soft=soft)
+    # an edit names one line: stay within two rows of it, else just above it
+    floor = float(anchor["Y0"]) - 2 * FIELD_ROW_HEIGHT
+    return _place_one(row, occupancy, page_width, page_height, column_edges(page_items), floor=floor,
+                      soft=soft, above_first=True)
 
 
 def _has_words(text: object) -> bool:
@@ -254,7 +259,7 @@ def _item_rects(rows: pd.DataFrame) -> list[Rect]:
 
 def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float,
                edges: list[float] | None = None, floor: float | None = None,
-               soft: _Occupancy | None = None) -> Rect | None:
+               soft: _Occupancy | None = None, above_first: bool = False) -> Rect | None:
     """A free slot in the field's own column: beside it, then the rows below
     it, on one line or wrapped onto two, then further down the column, then
     above it. Never in another column: a box there reads as the neighbouring
@@ -270,6 +275,10 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     text = str(row["ATEXT"])
     right_limit = page_width - _MIN_LEFT
     col_left, col_right = column_of(x0, edges or [], right_limit)
+    if x1 > col_right:
+        # a title or heading that runs across columns: the free space beside
+        # it is to the right of where it ends, up to the page edge
+        col_right = right_limit
     line_height = max(FIELD_ROW_HEIGHT, y1 - y0)
     shapes = [(annotation_width(text), line_height)]
     lines = two_lines(text)
@@ -313,6 +322,17 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
                     return found
         if floor is None:
             break
+    if above_first:
+        # just above the line (a title or a heading has room over it more
+        # often than beside it), before drifting further down the page
+        ceiling = page_height - _MIN_TOP
+        for top in _steps(y1 + 2.0, y1 + 2.0 + 2 * FIELD_ROW_HEIGHT, _FINE_STEP):
+            if top + max(h for _, h in fitting) > ceiling:
+                break
+            for width, height in fitting:
+                found = scan(top, max(col_left, min(x0, col_right - width)), width, height)
+                if found:
+                    return found
     for top in _steps(y0, lowest, -_FINE_STEP):  # no room above the next question
         for width, height in fitting:
             start = x1 + FIELD_GAP_X if top == y0 else max(col_left, min(x0, col_right - width))

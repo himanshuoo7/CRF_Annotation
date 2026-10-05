@@ -61,12 +61,19 @@ _FORM_RULES: Sequence[tuple[str, str, str, str]] = (
 )
 
 DOMAIN_LABELS = {
-    # the standard SDTMIG names, for domains no form rule produces
-    "CO": "Comments", "SV": "Subject Visits", "SE": "Subject Elements", "EC": "Exposure as Collected",
-    "PR": "Procedures", "QS": "Questionnaires", "FA": "Findings About", "TU": "Tumor Identification",
-    "TR": "Tumor Results", "RS": "Disease Response", "DD": "Death Details", "MB": "Microbiology Specimen",
-    "PC": "Pharmacokinetics Concentrations", "RP": "Reproductive System Findings", "CE": "Clinical Events",
-    "HO": "Healthcare Encounters", "DV": "Protocol Deviations", "ML": "Meal Data", "IS": "Immunogenicity",
+    # SDTMIG 3.4 dataset names, for banners on any domain a mapping uses
+    "AG": "Procedure Agents", "BE": "Biospecimen Events", "BS": "Biospecimen Findings",
+    "CE": "Clinical Events", "CO": "Comments", "CP": "Cell Phenotype Findings", "CV": "Cardiovascular System Findings",
+    "DA": "Product Accountability", "DD": "Death Details", "DV": "Protocol Deviations",
+    "EC": "Exposure as Collected", "FA": "Findings About", "FT": "Functional Tests", "GF": "Genomics Findings",
+    "HO": "Healthcare Encounters", "IS": "Immunogenicity Specimen Assessments", "MB": "Microbiology Specimen",
+    "MI": "Microscopic Findings", "MK": "Musculoskeletal System Findings", "ML": "Meal Data",
+    "MS": "Microbiology Susceptibility", "NV": "Nervous System Findings", "OE": "Ophthalmic Examinations",
+    "PC": "Pharmacokinetics Concentrations", "PP": "Pharmacokinetics Parameters", "PR": "Procedures",
+    "QS": "Questionnaires", "RE": "Respiratory System Findings", "RP": "Reproductive System Findings",
+    "RS": "Disease Response and Clin Classification", "SE": "Subject Elements", "SM": "Subject Disease Milestones",
+    "SR": "Skin Response", "SS": "Subject Status", "SV": "Subject Visits", "TR": "Tumor/Lesion Results",
+    "TU": "Tumor/Lesion Identification", "UR": "Urinary System Findings",
     **{domain: label for _, domain, label, _ in _FORM_RULES},
 }
 

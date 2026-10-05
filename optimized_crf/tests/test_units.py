@@ -413,3 +413,23 @@ def test_a_domain_banner_avoids_the_page_title():
 
     clear = header_rows_for_page(1, ["CM (Concomitant Medications)"], page_w, page_h)
     assert clear[0]["POS1"].startswith("[60.0, 797.0")   # nothing in the way: the usual top-left spot
+
+
+def test_a_box_for_a_heading_across_columns_goes_beside_it():
+    import pandas as pd
+
+    from crf_annotation.layout import place_box
+
+    page = pd.DataFrame([
+        {"PAGE_NO": 6, "ITM_TEXT": "Background Heart Failure Maintenance Medications Part 1", "X0": 48.0, "X1": 446.0, "Y0": 796.4, "Y1": 812.5},
+        {"PAGE_NO": 6, "ITM_TEXT": "Ref", "X0": 48.0, "X1": 60.0, "Y0": 746.0, "Y1": 760.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "CRF Question", "X0": 150.0, "X1": 210.0, "Y0": 746.0, "Y1": 760.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "Data Collected", "X0": 330.0, "X1": 400.0, "Y0": 746.0, "Y1": 760.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "1.1 Were any ACE inhibitors taken?", "X0": 48.0, "X1": 300.0, "Y0": 720.0, "Y1": 731.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "No (N)", "X0": 330.0, "X1": 360.0, "Y0": 720.0, "Y1": 731.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "1.2 If No, reason", "X0": 48.0, "X1": 200.0, "Y0": 700.0, "Y1": 711.0},
+        {"PAGE_NO": 6, "ITM_TEXT": "Cost (COST)", "X0": 330.0, "X1": 380.0, "Y0": 700.0, "Y1": 711.0},
+    ])
+    title = page.iloc[0]
+    rect = place_box(title, "CM.CMCAT", page, [], 595.0, 842.0)
+    assert rect is not None and rect[0] > 446.0 and rect[1] >= 790.0 and rect[3] <= 842.0
