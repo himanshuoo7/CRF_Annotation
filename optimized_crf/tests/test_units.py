@@ -331,4 +331,4 @@ def test_a_box_finds_the_gap_after_a_short_answer_in_a_narrow_column():
     taken = _Occupancy([(210.0, 500.0, 370.0, 510.0), (210.0, 486.0, 240.0, 498.0)])
     rect = _place_one(row, taken, page_width=612.0, page_height=792.0, edges=[40.0, 208.0, 376.0])
     assert rect is not None
-    assert 240.0 < rect[0] and rect[2] <= 376.0 and rect[1] < 500.0
+    assert rect[0] > 240.0 and rect[2] <= 376.0 and rect[1] < 500.0

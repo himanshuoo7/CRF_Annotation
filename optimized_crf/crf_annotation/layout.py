@@ -37,7 +37,7 @@ _COLUMN_GAP = 80.0    # text starts closer than this are indents, not columns
 _COLUMN_LINES = 3     # lines that must start at an x for it to count as a column
 
 
-def column_edges(page_items: pd.DataFrame) -> list[float]:
+def column_edges(page_items: pd.DataFrame, min_lines: int = _COLUMN_LINES) -> list[float]:
     """Where a page's text columns start, from where its lines start.
 
     A multi-column CRF lays questions out in columns; a box placed across a
@@ -50,7 +50,7 @@ def column_edges(page_items: pd.DataFrame) -> list[float]:
         return []
     counts = (starts // 4 * 4).value_counts()
     edges: list[float] = []
-    for x in sorted(counts[counts >= _COLUMN_LINES].index):
+    for x in sorted(counts[counts >= min_lines].index):
         if not edges or x - edges[-1] >= _COLUMN_GAP:
             edges.append(float(x))
     return edges
@@ -92,9 +92,9 @@ class _Occupancy:
         found: Rect | None = None
         for band in self._band_range(y0, y1):
             for other in self._bands.get(band, ()):
-                if x0 < other[2] and other[0] < x1 and y0 < other[3] and other[1] < y1:
-                    if found is None or other[2] > found[2]:
-                        found = other
+                overlaps = x0 < other[2] and other[0] < x1 and y0 < other[3] and other[1] < y1
+                if overlaps and (found is None or other[2] > found[2]):
+                    found = other
         return found
 
 
@@ -130,7 +130,10 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
         # reserved at the top for domain headers.
         page_items = result[result["PAGE_NO"] == page_no]
         occupancy = _Occupancy(_item_rects(page_items))
-        edges = column_edges(page_items)
+        # Columns from where the page's *questions* start: date masks and
+        # answer options start at odd places and would fake extra columns.
+        labels = page_items[page_items["VAR_OID"].notna()] if "VAR_OID" in page_items.columns else page_items
+        edges = column_edges(labels, min_lines=2) if len(labels) >= 4 else column_edges(page_items)
         occupancy.add((0.0, height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, width, height))
 
         # Top-to-bottom, left-to-right: stable output and better packing.
