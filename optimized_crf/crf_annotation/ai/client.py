@@ -286,43 +286,48 @@ class ClaudeClient:
         user: str,
         schema: Mapping[str, Any],
     ) -> Optional[dict[str, Any]]:
-        reply = None
         for attempt in range(1 + len(gemini.RETRY_DELAYS)):
+            last = attempt == len(gemini.RETRY_DELAYS)
             try:
                 reply = gemini.request(
                     client, model=self.settings.model, max_tokens=self.settings.max_tokens,
                     effort=self.settings.effort, system=system, user=user, schema=schema,
                 )
-                break
             except Exception as exc:  # noqa: BLE001 - never fail a run over AI assist
                 # A timeout or an overloaded server is worth another try; a
                 # whole form left unmapped because one call blinked is not.
-                if attempt < len(gemini.RETRY_DELAYS) and gemini.is_transient(exc):
+                if not last and gemini.is_transient(exc):
                     logger.warning("Gemini request failed (%s); retrying", str(exc)[:80])
                     time.sleep(gemini.RETRY_DELAYS[attempt])
                     continue
                 logger.error("Gemini request failed: %s", exc)
                 return None
-        if reply is None:
-            return None
 
-        self.calls += 1
-        self.input_tokens += reply.input_tokens
-        self.output_tokens += reply.output_tokens
-        if reply.blocked:
-            logger.error("Gemini declined the request (%s)", reply.blocked)
-            return None
-        if not reply.text:
-            logger.error("Gemini returned no text content")
-            return None
-        try:
-            parsed = json.loads(reply.text)
-        except json.JSONDecodeError as exc:
-            logger.error("Gemini returned unparseable JSON: %s", exc)
-            return None
-
-        self.cache.put(key, parsed)
-        return parsed
+            self.calls += 1
+            self.input_tokens += reply.input_tokens
+            self.output_tokens += reply.output_tokens
+            if reply.blocked:
+                logger.error("Gemini declined the request (%s)", reply.blocked)
+                return None
+            try:
+                parsed = json.loads(reply.text) if reply.text else None
+            except json.JSONDecodeError as exc:
+                parsed, problem = None, f"unparseable JSON ({exc})"
+            else:
+                problem = "no text content" if parsed is None else ""
+            if parsed is not None:
+                self.cache.put(key, parsed)
+                return parsed
+            # A cut-off or empty answer (the token budget ran out mid-answer)
+            # is usually fine on a second try.
+            if reply.truncated:
+                problem += " - the answer was cut off at the output limit"
+            if not last:
+                logger.warning("Gemini returned %s; retrying", problem)
+                time.sleep(gemini.RETRY_DELAYS[attempt])
+                continue
+            logger.error("Gemini returned %s", problem)
+        return None
 
     # -- reporting ----------------------------------------------------------
     def usage_summary(self) -> str:

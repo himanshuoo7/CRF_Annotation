@@ -556,3 +556,24 @@ def test_a_timed_out_gemini_call_is_retried(tmp_path, monkeypatch):
     assert client.json_call(system="s", user="u", schema={"type": "object"}) == {"ok": True}
     assert len(calls) == 2
     assert not gemini.is_transient(ValueError("400 INVALID_ARGUMENT: bad schema"))
+
+
+def test_a_cut_off_gemini_answer_is_retried(tmp_path, monkeypatch):
+    """Thinking can eat the output budget and cut the JSON short: ask again."""
+    from types import SimpleNamespace
+
+    from crf_annotation.ai import gemini
+    from crf_annotation.ai.client import AiSettings, ClaudeClient
+
+    monkeypatch.setattr(gemini, "RETRY_DELAYS", (0.0, 0.0))
+    answers = iter(['{"forms": [{"form_oid": "F.12", "fie', '{"ok": true}'])
+
+    class Models:
+        def generate_content(self, **kwargs):
+            assert kwargs["config"].max_output_tokens >= gemini.MIN_OUTPUT_TOKENS
+            return SimpleNamespace(text=next(answers), prompt_feedback=None, usage_metadata=None,
+                                   candidates=[SimpleNamespace(finish_reason="MAX_TOKENS")])
+
+    client = ClaudeClient(AiSettings(model="gemini-3.8-flash", cache_dir=tmp_path))
+    client._client = SimpleNamespace(models=Models())
+    assert client.json_call(system="s", user="u", schema={"type": "object"}) == {"ok": True}

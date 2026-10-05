@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 REQUEST_TIMEOUT_MS = 300_000
-RETRY_DELAYS = (3.0, 10.0)   # seconds before the second and third attempt
+MIN_OUTPUT_TOKENS = 32_768
+RETRY_DELAYS = (5.0, 20.0, 45.0)   # seconds before each further attempt (rate limits clear in ~a minute)
 _TRANSIENT = ("DEADLINE_EXCEEDED", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL", "timed out", "Timeout",
               " 429", " 500", " 502", " 503", " 504")
 
@@ -40,6 +41,7 @@ class GeminiReply:
     input_tokens: int
     output_tokens: int
     blocked: Optional[str] = None
+    truncated: bool = False
 
 
 def make_client(project: Optional[str], region: str) -> Any:
@@ -78,7 +80,8 @@ def request(
         contents=user,
         config=types.GenerateContentConfig(
             system_instruction=_system_text(system),
-            max_output_tokens=max_tokens,
+            # thinking counts against the same budget as the answer on Gemini
+            max_output_tokens=max(max_tokens, MIN_OUTPUT_TOKENS),
             response_mime_type="application/json",
             response_json_schema=dict(schema),
             thinking_config=types.ThinkingConfig(thinking_level=thinking_level(effort)),
@@ -89,10 +92,13 @@ def request(
     usage = getattr(response, "usage_metadata", None)
     feedback = getattr(response, "prompt_feedback", None)
     blocked = getattr(feedback, "block_reason", None)
+    candidates = getattr(response, "candidates", None) or []
+    finish = str(getattr(candidates[0], "finish_reason", "") or "") if candidates else ""
     return GeminiReply(
         text=(response.text or "") if not blocked else "",
         input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
         output_tokens=(getattr(usage, "candidates_token_count", 0) or 0)
         + (getattr(usage, "thoughts_token_count", 0) or 0),
         blocked=str(blocked) if blocked else None,
+        truncated="MAX_TOKENS" in finish,
     )
