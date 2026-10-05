@@ -41,13 +41,15 @@ from crf_annotation import MatchingOptions, annotate_crf
 from crf_annotation.job import CrfAnnotationError
 from crf_annotation.logging_utils import get_logger
 
+from . import audit
+
 DATA_DIR = Path(os.getenv("ACRF_DATA_DIR", "./data")).resolve()
 SECRET = os.getenv("ACRF_SERVICE_SECRET", "")
 RETENTION_DAYS = float(os.getenv("ACRF_RETENTION_DAYS", "7"))
 MAX_UPLOAD_BYTES = int(os.getenv("ACRF_MAX_UPLOAD_BYTES", str(80 * 1024 * 1024)))
 JOB_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
-OUTPUT_FILES = {"acrf.pdf", "aCRF_Config.xlsx", "proposed_mappings.json"}
+OUTPUT_FILES = {"acrf.pdf", "aCRF_Config.xlsx", "proposed_mappings.json", "audit_trail.csv"}
 
 app = FastAPI(title="aCRF service", docs_url=None, redoc_url=None, openapi_url=None)
 logger = logging.getLogger("acrf.service")
@@ -83,6 +85,12 @@ def verify_ticket(ticket: Optional[str], job_id: str, secret: Optional[str] = No
 
 
 # --- jobs ------------------------------------------------------------------
+def _model_name() -> str:
+    from crf_annotation.ai import AiSettings
+
+    return AiSettings.from_env().model
+
+
 def job_dir(job_id: str) -> Path:
     if not JOB_ID.match(job_id):
         raise HTTPException(404, "not_found")
@@ -206,7 +214,7 @@ def healthz() -> dict[str, Any]:
 @app.post("/v1/jobs/{job_id}/files")
 async def upload(job_id: str, files: list[UploadFile] = File(...),
                  x_acrf_ticket: Optional[str] = Header(default=None)) -> dict[str, Any]:
-    verify_ticket(x_acrf_ticket, job_id)
+    actor = audit.actor_of(verify_ticket(x_acrf_ticket, job_id))
     if read_status(job_id).get("state") == "running":
         raise HTTPException(409, "running")
     total = 0
@@ -217,13 +225,17 @@ async def upload(job_id: str, files: list[UploadFile] = File(...),
             raise HTTPException(413, "too_large")
         name = SAFE_NAME.sub("_", Path(upload_file.filename or "upload").name)[:120] or "upload"
         kind = classify(name, content)
+        fingerprint = hashlib.sha256(content).hexdigest()
         if kind == "unknown":
+            audit.record(job_dir(job_id), actor, "file_ignored", file=name, bytes=len(content), sha256=fingerprint)
             continue
         target = job_dir(job_id) / "inputs" / kind
         if kind == "crf":
             shutil.rmtree(target, ignore_errors=True)  # one blank CRF per job
         target.mkdir(parents=True, exist_ok=True)
         (target / name).write_bytes(content)
+        audit.record(job_dir(job_id), actor, "file_uploaded", file=name, kind=kind, bytes=len(content),
+                     sha256=fingerprint)
     summary = summarise_inputs(job_id)
     status = read_status(job_id)
     status.update({"state": "ready" if not summary["missing"] else "uploading", **summary})
@@ -243,6 +255,7 @@ _RUN_LOCK = threading.Lock()
 @app.post("/v1/jobs/{job_id}/run")
 def run(job_id: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> JSONResponse:
     ticket = verify_ticket(x_acrf_ticket, job_id)
+    actor = audit.actor_of(ticket)
     summary = summarise_inputs(job_id)
     if summary["missing"]:
         raise HTTPException(400, "missing_inputs")
@@ -255,6 +268,8 @@ def run(job_id: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> JSO
         steps[2]["label"] = "Proposing SDTM mappings with CDISC rules and AI"
     write_status(job_id, {**summary, "state": "running", "steps": _advance(steps), "started": time.time()})
 
+    audit.record(root, actor, "run_started", inputs=[f["name"] for f in summary.get("files", [])],
+                 specs_supplied=summary["has_specs"])
     handler = _StepHandler(job_id)
     pipeline_logger = get_logger()  # the pipeline's own logger, not the package name
     pipeline_logger.addHandler(handler)
@@ -272,9 +287,11 @@ def run(job_id: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> JSO
         )
     except CrfAnnotationError as exc:
         write_status(job_id, {**read_status(job_id), "state": "failed", "error": str(exc)})
+        audit.record(root, actor, "run_failed", error=str(exc))
         return JSONResponse(read_status(job_id), status_code=422)
-    except Exception:  # noqa: BLE001 - one failed job must not take the service down
+    except Exception as exc:  # noqa: BLE001 - one failed job must not take the service down
         logger.exception("job %s failed", job_id)
+        audit.record(root, actor, "run_failed", error=type(exc).__name__)
         write_status(job_id, {**read_status(job_id), "state": "failed",
                               "error": "Something went wrong while annotating. Our team has been notified."})
         return JSONResponse(read_status(job_id), status_code=500)
@@ -289,19 +306,29 @@ def run(job_id: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> JSO
     data.pop("config", None)
     done.update({"state": "done", "result": data, "finished": time.time()})
     write_status(job_id, done)
+    outputs = {name: audit.file_sha256(root / "out" / name)
+               for name in ("acrf.pdf", "aCRF_Config.xlsx") if (root / "out" / name).is_file()}
+    audit.record(root, actor, "run_finished", model=_model_name(), outputs=outputs,
+                 counts={key: data.get(key) for key in ("pages", "forms", "fields", "annotations",
+                                                        "needs_review", "not_submitted")})
     sweep_old_jobs()
     return JSONResponse(done)
 
 
 @app.get("/v1/jobs/{job_id}/files/{name}")
 def download(job_id: str, name: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> FileResponse:
-    verify_ticket(x_acrf_ticket, job_id)
+    actor = audit.actor_of(verify_ticket(x_acrf_ticket, job_id))
     if name not in OUTPUT_FILES:
         raise HTTPException(404, "not_found")
+    if name == "audit_trail.csv":
+        audit.record(job_dir(job_id), actor, "file_downloaded", file=name)
+        return Response(audit.to_csv(job_dir(job_id)), media_type="text/csv",
+                        headers={"content-disposition": 'attachment; filename="audit_trail.csv"'})
     out = job_dir(job_id) / "out"
     path = out / "proposed_specs" / name if name == "proposed_mappings.json" else out / name
     if not path.is_file():
         raise HTTPException(404, "not_found")
+    audit.record(job_dir(job_id), actor, "file_downloaded", file=name, sha256=audit.file_sha256(path))
     return FileResponse(path, filename=name)
 
 
@@ -328,6 +355,18 @@ class ChatMessage(BaseModel):
 def chat(job_id: str, body: ChatMessage, x_acrf_ticket: Optional[str] = Header(default=None)) -> dict[str, Any]:
     """Questions about the result, and plain-English edits that re-render it."""
     ticket = verify_ticket(x_acrf_ticket, job_id)
+    actor = audit.actor_of(ticket)
     from .chat import answer
 
-    return answer(job_dir(job_id), body.message[:2000], study=str(ticket.get("study") or "Study"))
+    root = job_dir(job_id)
+    message = body.message[:2000]
+    audit.record(root, actor, "chat_message", message=message)
+    result = answer(root, message, study=str(ticket.get("study") or "Study"))
+    for change in result.get("changes") or ():
+        audit.record(root, actor, change["action"], via="chat",
+                     **{key: value for key, value in change.items() if key != "action"})
+    if result.get("changes") and result.get("result"):
+        audit.record(root, actor, "rerendered", outputs={"acrf.pdf": audit.file_sha256(root / "out" / "acrf.pdf")})
+    audit.record(root, actor, "chat_reply", reply=str(result.get("reply") or "")[:4000],
+                 edits_applied=int(result.get("edits_applied") or 0))
+    return result

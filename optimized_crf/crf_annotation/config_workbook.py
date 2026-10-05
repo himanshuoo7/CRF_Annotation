@@ -47,6 +47,26 @@ def header_width(text: str) -> float:
     return len(str(text)) * HEADER_CHAR_WIDTH + 2 * HEADER_GAP_X
 
 
+def header_rows_for_page(page_no: int, texts: Sequence[str], page_width: float, page_height: float,
+                         ds_oid: object = "", itm_text: object = "", ds_name: object = "") -> list[dict[str, object]]:
+    """Domain banners for one page, laid out left to right with wrap."""
+    rows: list[dict[str, object]] = []
+    x = HEADER_LEFT_MARGIN
+    top = page_height - HEADER_TOP_MARGIN
+    for text in texts:
+        width = header_width(text)
+        if x + width > page_width - HEADER_RIGHT_MARGIN and x > HEADER_LEFT_MARGIN:
+            x = HEADER_LEFT_MARGIN
+            top -= HEADER_ROW_HEIGHT + HEADER_GAP_Y
+        rows.append({
+            "PAGE_NO": page_no, "DS_OID": ds_oid, "ITM_TEXT": itm_text, "DS_NAME": ds_name,
+            "POS1": format_pos(x, top - HEADER_ROW_HEIGHT, x + width, top),
+            "A_TEXT": text, "ANNOTATION_TYPE": ANNOTATION_HEADER,
+        })
+        x += width + HEADER_GAP_X
+    return rows
+
+
 def build_header_rows(
     merged: pd.DataFrame,
     catalog: SpecCatalog,
@@ -73,26 +93,12 @@ def build_header_rows(
         page_width = geometry.width(int(page_no))
         page_height = geometry.height(int(page_no))
 
-        x = HEADER_LEFT_MARGIN
-        top = page_height - HEADER_TOP_MARGIN
-        for domain in domains:
-            text = catalog.header_text(domain)
-            width = header_width(text)
-            if x + width > page_width - HEADER_RIGHT_MARGIN and x > HEADER_LEFT_MARGIN:
-                x = HEADER_LEFT_MARGIN
-                top -= HEADER_ROW_HEIGHT + HEADER_GAP_Y
-            rows.append(
-                {
-                    "PAGE_NO": page_no,
-                    "DS_OID": "" if banner is None else banner.get("DS_OID", ""),
-                    "ITM_TEXT": "" if banner is None else banner.get("ITM_TEXT", ""),
-                    "DS_NAME": "" if banner is None else banner.get("DS_NAME", ""),
-                    "POS1": format_pos(x, top - HEADER_ROW_HEIGHT, x + width, top),
-                    "A_TEXT": text,
-                    "ANNOTATION_TYPE": ANNOTATION_HEADER,
-                }
-            )
-            x += width + HEADER_GAP_X
+        rows.extend(header_rows_for_page(
+            page_no, [catalog.header_text(domain) for domain in domains], page_width, page_height,
+            ds_oid="" if banner is None else banner.get("DS_OID", ""),
+            itm_text="" if banner is None else banner.get("ITM_TEXT", ""),
+            ds_name="" if banner is None else banner.get("DS_NAME", ""),
+        ))
 
     logger.info("Built %d domain header banner(s)", len(rows))
     return pd.DataFrame(rows, columns=list(COORDINATE_COLUMNS))

@@ -113,3 +113,88 @@ def test_chat_lists_reviews_without_a_model_and_edits_with_one(client, study):
     after = read_config_workbook(root / "out" / "aCRF_Config.xlsx")
     assert after.at[row, "A_TEXT"] == "DM.SEXX"
     assert after.at[row, "MATCH_METHOD"] == "reviewed"
+
+
+# --- audit trail ------------------------------------------------------------
+def test_the_audit_chain_detects_tampering(tmp_path):
+    from service import audit
+
+    actor = {"user_id": "u1", "email": "reviewer@example.com", "name": "Reviewer"}
+    audit.record(tmp_path, actor, "file_uploaded", file="crf.pdf", sha256="ab")
+    audit.record(tmp_path, actor, "annotation_changed", page=1, before="DM.SEX", after="DM.SEXX")
+    assert audit.verify(tmp_path) == (True, None)
+    assert [e["seq"] for e in audit.entries(tmp_path)] == [1, 2]
+    assert b"reviewer@example.com" in audit.to_csv(tmp_path)
+
+    path = tmp_path / audit.AUDIT_FILE
+    path.write_text(path.read_text().replace("DM.SEXX", "DM.RACE"))   # rewrite history
+    assert audit.verify(tmp_path) == (False, 2)
+    assert b"BROKEN at entry 2" in audit.to_csv(tmp_path)
+
+
+def test_every_user_action_lands_in_the_audit_trail(client, study):
+    upload(client, study)
+    client.post(f"/v1/jobs/{JOB}/run", headers=ticket())
+    client.get(f"/v1/jobs/{JOB}/files/acrf.pdf", headers=ticket())
+
+    from service import audit
+
+    trail = audit.entries(service.job_dir(JOB))
+    actions = [entry["action"] for entry in trail]
+    assert actions.count("file_uploaded") >= 2
+    assert "run_started" in actions and "run_finished" in actions and "file_downloaded" in actions
+    assert all(entry["actor"]["user_id"] == "user-1" for entry in trail)
+    finished = next(entry for entry in trail if entry["action"] == "run_finished")
+    assert len(finished["outputs"]["acrf.pdf"]) == 64                 # the delivered PDF's SHA-256
+    csv_text = client.get(f"/v1/jobs/{JOB}/files/audit_trail.csv", headers=ticket()).text
+    assert "Hash chain: intact" in csv_text and "run_finished" in csv_text
+
+
+# --- chat edits: remove, add, move -------------------------------------------
+def _line(root, text):
+    from service.chat import _Page
+
+    items = _Page(root).items
+    return int(items.index[items["ITM_TEXT"].astype(str) == text][0])
+
+
+def test_chat_can_remove_add_and_move_annotations_and_each_is_audited(client, study, monkeypatch):
+    upload(client, study)
+    client.post(f"/v1/jobs/{JOB}/run", headers=ticket())
+    root = service.job_dir(JOB)
+    fields = read_config_workbook(root / "out" / "aCRF_Config.xlsx")
+    race = int(fields[fields["A_TEXT"].astype(str) == "DM.RACE"].index[0])
+    sex = int(fields[fields["A_TEXT"].astype(str) == "DM.SEX"].index[0])
+
+    removed = chat.answer(root, "remove the race box on page 1", client=FakeModel({
+        "reply": "Removed.", "edits": [{"action": "remove", "row": race, "line": -1, "annotation": ""}]}))
+    assert removed["changes"][0]["action"] == "annotation_removed"
+    after = read_config_workbook(root / "out" / "aCRF_Config.xlsx")
+    assert "DM.RACE" not in set(after["A_TEXT"].astype(str))
+
+    added = chat.answer(root, "add DM.RACE next to Race on page 1", client=FakeModel({
+        "reply": "Added.", "edits": [{"action": "add", "row": -1, "line": _line(root, "Race"), "annotation": "DM.RACE"}]}))
+    change = added["changes"][0]
+    assert change["action"] == "annotation_added" and change["page"] == 1 and change["after"] == "DM.RACE"
+    after = read_config_workbook(root / "out" / "aCRF_Config.xlsx")
+    new = after[after["A_TEXT"].astype(str) == "DM.RACE"].iloc[0]
+    assert new["ITM_TEXT"] == "Race" and new["MATCH_METHOD"] == "reviewed" and new["POS1"] != "[0, 0, 0, 0]"
+
+    sex = int(after[after["A_TEXT"].astype(str) == "DM.SEX"].index[0])
+    moved = chat.answer(root, "move the sex box beside Date of Birth on page 1", client=FakeModel({
+        "reply": "Moved.", "edits": [{"action": "move", "row": sex, "line": _line(root, "Date of Birth"),
+                                      "annotation": ""}]}))
+    assert moved["changes"][0]["action"] == "annotation_moved"
+    assert "Date of Birth" in moved["changes"][0]["after"]
+
+    # the service route writes each of these to the job's audit trail
+    monkeypatch.setattr(chat, "_client", lambda: FakeModel({
+        "reply": "Changed.", "edits": [{"action": "change", "row": sex, "line": -1, "annotation": "DM.SEXX"}]}))
+    client.post(f"/v1/jobs/{JOB}/chat", json={"message": "make sex DM.SEXX"}, headers=ticket())
+    from service import audit
+
+    trail = audit.entries(root)
+    edit = next(entry for entry in trail if entry["action"] == "annotation_changed")
+    assert (edit["before"], edit["after"], edit["via"]) == ("DM.SEX", "DM.SEXX", "chat")
+    assert [e["action"] for e in trail][-3:] == ["annotation_changed", "rerendered", "chat_reply"]
+    assert audit.verify(root) == (True, None)

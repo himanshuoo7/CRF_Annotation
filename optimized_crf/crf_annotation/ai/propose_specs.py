@@ -58,7 +58,7 @@ _FORM_RULES: Sequence[tuple[str, str, str, str]] = (
     (r"subject characteristic", "SC", "Subject Characteristics", "FINDINGS"),
 )
 
-_DOMAIN_LABELS = {
+DOMAIN_LABELS = {
     # the standard SDTMIG names, for domains no form rule produces
     "CO": "Comments", "SV": "Subject Visits", "SE": "Subject Elements", "EC": "Exposure as Collected",
     "PR": "Procedures", "QS": "Questionnaires", "FA": "Findings About", "TU": "Tumor Identification",
@@ -463,7 +463,7 @@ def to_spec_documents(proposal: Proposal) -> dict[str, dict[str, Any]]:
         if mapping.domain and mapping.domain != domain:
             # collected here, submitted elsewhere (the subject number, into DM)
             domain, label, klass = mapping.domain, "", ""
-        label = label or _DOMAIN_LABELS.get(domain, domain)
+        label = label or DOMAIN_LABELS.get(domain, domain)
         if mapping.qnam:
             name = f"SUPP{domain}"
             doc = documents.setdefault(f"{mapping.form_oid}__{name}", {

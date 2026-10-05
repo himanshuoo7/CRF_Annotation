@@ -212,6 +212,19 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
     return result, PlacementStats(placed=placed, dropped=dropped)
 
 
+def place_box(anchor: pd.Series, text: str, page_items: pd.DataFrame, boxes: Iterable[Rect],
+              page_width: float, page_height: float) -> Rect | None:
+    """Place one annotation beside `anchor` (a printed line) on a page that
+    already carries `boxes`: the same rules as a full run, for an edit."""
+    header_band = (0.0, page_height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, page_width, page_height)
+    boxes = list(boxes)
+    occupancy = _Occupancy([*_item_rects(page_items), *boxes, header_band])
+    wordy = page_items[page_items["ITM_TEXT"].map(_has_words)]
+    soft = _Occupancy([*_item_rects(wordy), *boxes, header_band])
+    row = pd.Series({"X0": anchor["X0"], "X1": anchor["X1"], "Y0": anchor["Y0"], "Y1": anchor["Y1"], "ATEXT": text})
+    return _place_one(row, occupancy, page_width, page_height, column_edges(page_items), soft=soft)
+
+
 def _has_words(text: object) -> bool:
     return any(ch.isalnum() for ch in str(text or ""))
 
