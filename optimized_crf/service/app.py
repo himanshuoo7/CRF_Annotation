@@ -365,7 +365,7 @@ def chat(job_id: str, body: ChatMessage, x_acrf_ticket: Optional[str] = Header(d
     for change in result.get("changes") or ():
         audit.record(root, actor, change["action"], via="chat",
                      **{key: value for key, value in change.items() if key != "action"})
-    if result.get("changes") and result.get("result"):
+    if result.get("edits_applied") and result.get("result"):
         audit.record(root, actor, "rerendered", outputs={"acrf.pdf": audit.file_sha256(root / "out" / "acrf.pdf")})
     audit.record(root, actor, "chat_reply", reply=str(result.get("reply") or "")[:4000],
                  edits_applied=int(result.get("edits_applied") or 0))

@@ -190,11 +190,17 @@ def _relayout_headers(coordinates: pd.DataFrame, page: int, geometry: PageGeomet
 
 
 def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any]],
-                page: Optional[_Page] = None) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
-    """Check and apply edits; return the workbook and one record per applied edit."""
+                page: Optional[_Page] = None) -> tuple[pd.DataFrame, list[dict[str, Any]], list[dict[str, Any]]]:
+    """Check and apply edits. Returns the workbook, one record per applied edit,
+    and one per refused edit with the reason (both go to the audit trail)."""
     coordinates = coordinates.copy()
     applied: list[dict[str, Any]] = []
+    refused: list[dict[str, Any]] = []
     touched: set[int] = set()
+
+    def refuse(edit: dict[str, Any], reason: str) -> None:
+        refused.append({"action": "edit_refused", "requested": str(edit.get("action") or ""),
+                        "annotation": str(edit.get("annotation") or ""), "reason": reason})
 
     def reviewed(index: int, note: str) -> None:
         coordinates.at[index, "MATCH_METHOD"] = "reviewed"
@@ -207,13 +213,16 @@ def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any
         row, line = edit.get("row", -1), edit.get("line", -1)
         text = str(edit.get("annotation") or "").strip()
         if action in ("change", "remove", "move") and row not in fields.index:
+            refuse(edit, "no such annotation")
             continue
         if action in ("change", "add") and not _ANNOTATION.match(text):
+            refuse(edit, "not a valid annotation")
             continue
 
         if action == "change":
             before = str(coordinates.at[row, "A_TEXT"])
             if before == text:
+                refuse(edit, f"page {int(coordinates.at[row, 'PAGE_NO'])} already shows {text} there")
                 continue
             coordinates.at[row, "A_TEXT"] = text
             reviewed(row, "edited in chat")
@@ -235,11 +244,17 @@ def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any
         page = page or _Page(root)
         anchor = page.line(line) if isinstance(line, int) and line >= 0 else None
         if anchor is None:
+            refuse(edit, "no such printed line")
             continue
         anchor_page = int(anchor["PAGE_NO"])
         if action == "add":
+            same = fields[(fields["PAGE_NO"].astype(int) == anchor_page) & (fields["A_TEXT"].astype(str) == text)]
+            if not same.empty:
+                refuse(edit, f"page {anchor_page} already has {text} (beside “{same.iloc[0]['ITM_TEXT']}”)")
+                continue
             position = page.place(coordinates, anchor, text)
             if not position:
+                refuse(edit, f"no free space beside “{anchor['ITM_TEXT']}” on page {anchor_page}")
                 continue
             index = int(coordinates.index.max()) + 1 if not coordinates.empty else 0
             same_page = fields[fields["PAGE_NO"].astype(int) == anchor_page]
@@ -260,6 +275,7 @@ def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any
             current = str(coordinates.at[row, "A_TEXT"])
             position = page.place(coordinates, anchor, current, skip_row=row)
             if not position:
+                refuse(edit, f"no free space beside “{anchor['ITM_TEXT']}” on page {anchor_page}")
                 continue
             from_page, from_text = int(coordinates.at[row, "PAGE_NO"]), str(coordinates.at[row, "ITM_TEXT"])
             coordinates.at[row, "PAGE_NO"] = anchor_page
@@ -281,7 +297,7 @@ def apply_edits(root: Path, coordinates: pd.DataFrame, edits: list[dict[str, Any
         order = pd.DataFrame({"page": coordinates["PAGE_NO"].astype(int), "rank": rank,
                               "seq": range(len(coordinates))}, index=coordinates.index)
         coordinates = coordinates.loc[order.sort_values(["page", "rank", "seq"], kind="stable").index]
-    return coordinates, applied
+    return coordinates, applied, refused
 
 
 def answer(root: Path, message: str, study: str = "Study", client: Any = "auto") -> dict[str, Any]:
@@ -314,9 +330,12 @@ def answer(root: Path, message: str, study: str = "Study", client: Any = "auto")
     response = model.json_call(system=_SYSTEM, user=user + f"User: {message}", schema=_SCHEMA, cache_salt=None) or {}
     reply = str(response.get("reply") or "Sorry — I couldn't work that out. Try rephrasing?")
 
-    coordinates, changes = apply_edits(root, coordinates, list(response.get("edits") or ()), page)
+    coordinates, changes, refused = apply_edits(root, coordinates, list(response.get("edits") or ()), page)
+    if refused:
+        # the model's reply may claim an edit that was not made: say so plainly
+        reply += "\n\nNot applied: " + "; ".join(r["reason"] for r in refused) + "."
     if not changes:
-        return {"reply": reply, "edits_applied": 0, "changes": []}
+        return {"reply": reply, "edits_applied": 0, "changes": refused}
 
     sheets = pd.read_excel(workbook, sheet_name=None, engine="openpyxl")
     write_config_workbook(workbook, coordinates, sheets.get(UNMAPPED_SHEET), sheets.get(FILENAMES_SHEET))
@@ -327,8 +346,8 @@ def answer(root: Path, message: str, study: str = "Study", client: Any = "auto")
         )
     except CrfAnnotationError as exc:
         return {"reply": f"{reply}\n\nI couldn't re-render the CRF: {exc}", "edits_applied": len(changes),
-                "changes": changes}
+                "changes": changes + refused}
     data = result.to_dict()
     data.pop("acrf", None)
     data.pop("config", None)
-    return {"reply": reply, "edits_applied": len(changes), "changes": changes, "result": data}
+    return {"reply": reply, "edits_applied": len(changes), "changes": changes + refused, "result": data}

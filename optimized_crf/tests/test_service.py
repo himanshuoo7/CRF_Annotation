@@ -198,3 +198,14 @@ def test_chat_can_remove_add_and_move_annotations_and_each_is_audited(client, st
     assert (edit["before"], edit["after"], edit["via"]) == ("DM.SEX", "DM.SEXX", "chat")
     assert [e["action"] for e in trail][-3:] == ["annotation_changed", "rerendered", "chat_reply"]
     assert audit.verify(root) == (True, None)
+
+
+def test_an_add_that_would_duplicate_is_refused_and_said_so(client, study):
+    upload(client, study)
+    client.post(f"/v1/jobs/{JOB}/run", headers=ticket())
+    root = service.job_dir(JOB)
+    reply = chat.answer(root, "add DM.SEX next to Sex on page 1", client=FakeModel({
+        "reply": "Added.", "edits": [{"action": "add", "row": -1, "line": _line(root, "Sex"), "annotation": "DM.SEX"}]}))
+    assert reply["edits_applied"] == 0
+    assert reply["changes"][0]["action"] == "edit_refused" and "already has DM.SEX" in reply["changes"][0]["reason"]
+    assert "Not applied" in reply["reply"]
