@@ -84,12 +84,18 @@ class _Occupancy:
             self._bands.setdefault(band, []).append(rect)
 
     def collides(self, rect: Rect) -> bool:
+        return self.blocker(rect) is not None
+
+    def blocker(self, rect: Rect) -> Rect | None:
+        """The rectangle in the way that reaches furthest right, if any."""
         x0, y0, x1, y1 = rect
+        found: Rect | None = None
         for band in self._band_range(y0, y1):
             for other in self._bands.get(band, ()):
                 if x0 < other[2] and other[0] < x1 and y0 < other[3] and other[1] < y1:
-                    return True
-        return False
+                    if found is None or other[2] > found[2]:
+                        found = other
+        return found
 
 
 @dataclass(frozen=True)
@@ -185,7 +191,10 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
             left = x1 + FIELD_GAP_X if drop == 0 else row_start
             while left + box_width <= limit:
                 candidate = (left, top, left + box_width, top + box_height)
-                if not occupancy.collides(candidate):
+                blocker = occupancy.blocker(candidate)
+                if blocker is None:
                     return candidate
-                left += box_width / 2 + FIELD_GAP_X
+                # step just past what is in the way: a narrow column has room
+                # right after a short "Yes"/"No", which a coarse step jumps over
+                left = max(left + 1.0, blocker[2] + FIELD_GAP_X)
     return None

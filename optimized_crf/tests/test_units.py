@@ -319,3 +319,16 @@ def test_columns_are_found_from_where_lines_start_and_indents_are_not_columns():
     assert edges == [40.0, 208.0, 400.0]            # 52 and 222 are answer-option indents
     left, right = column_of(222.0, edges, 592.0)    # an option in the middle column
     assert left == 208.0 and right < 400.0
+
+
+def test_a_box_finds_the_gap_after_a_short_answer_in_a_narrow_column():
+    import pandas as pd
+
+    from crf_annotation.layout import _Occupancy, _place_one
+
+    # question fills its line; the row below holds a short "No" with room after it
+    row = pd.Series({"X0": 210.0, "X1": 370.0, "Y0": 500.0, "Y1": 510.0, "ATEXT": "PGXSMPL in SUPPDS"})
+    taken = _Occupancy([(210.0, 500.0, 370.0, 510.0), (210.0, 486.0, 240.0, 498.0)])
+    rect = _place_one(row, taken, page_width=612.0, page_height=792.0, edges=[40.0, 208.0, 376.0])
+    assert rect is not None
+    assert 240.0 < rect[0] and rect[2] <= 376.0 and rect[1] < 500.0
