@@ -11,7 +11,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
-REQUEST_TIMEOUT_MS = 120_000
+REQUEST_TIMEOUT_MS = 300_000
+RETRY_DELAYS = (3.0, 10.0)   # seconds before the second and third attempt
+_TRANSIENT = ("DEADLINE_EXCEEDED", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL", "timed out", "Timeout",
+              " 429", " 500", " 502", " 503", " 504")
+
+
+def is_transient(exc: Exception) -> bool:
+    """Timeouts, rate limits and server errors - not a bad request."""
+    text = f"{type(exc).__name__} {exc}"
+    return any(marker in text for marker in _TRANSIENT)
 
 # Gemini's thinking levels stop at "high"; the deeper Claude efforts map onto it.
 _THINKING_LEVELS = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
@@ -39,7 +48,7 @@ def make_client(project: Optional[str], region: str) -> Any:
     from google import genai
     from google.genai import types
 
-    # a hung request must not hang the run: give up after two minutes
+    # a hung request must not hang the run: give up after five minutes (then retry)
     http_options = types.HttpOptions(timeout=REQUEST_TIMEOUT_MS)
     if project:
         return genai.Client(vertexai=True, project=project, location=region, http_options=http_options)

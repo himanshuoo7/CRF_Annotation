@@ -513,3 +513,46 @@ def test_a_separator_line_is_not_joined_into_the_label_below_it():
     by_text = dict(zip(matched["ITM_TEXT"], matched["VAR_OID"]))
     assert pd.isna(by_text["_"])
     assert by_text["Did the subject meet all the entry"] == "ALLMET"
+
+
+@pytest.mark.parametrize("printed,label", [
+    ("1.1 Were any adverse events experienced?", "Were any adverse events experienced?"),
+    ("2.4 End date", "End date"),
+    ("Q3) Weight", "Weight"),
+    ("2. Weight", "Weight"),
+])
+def test_question_numbering_on_the_crf_does_not_stop_a_match(printed, label):
+    from crf_annotation.binding import normalise
+
+    assert normalise(printed) == normalise(label)
+
+
+@pytest.mark.parametrize("text", ["2 weeks ago?", "10 mg dose", "24-hour urine"])
+def test_a_number_that_is_part_of_the_question_is_kept(text):
+    from crf_annotation.binding import normalise
+
+    assert normalise(text) == text.lower()
+
+
+def test_a_timed_out_gemini_call_is_retried(tmp_path, monkeypatch):
+    """One 504 must not leave a whole form unmapped."""
+    from types import SimpleNamespace
+
+    from crf_annotation.ai import gemini
+    from crf_annotation.ai.client import AiSettings, ClaudeClient
+
+    monkeypatch.setattr(gemini, "RETRY_DELAYS", (0.0, 0.0))
+    calls = []
+
+    class FlakyModels:
+        def generate_content(self, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("504 DEADLINE_EXCEEDED. Deadline expired before operation could complete.")
+            return SimpleNamespace(text='{"ok": true}', prompt_feedback=None, usage_metadata=None)
+
+    client = ClaudeClient(AiSettings(model="gemini-3.8-flash", cache_dir=tmp_path))
+    client._client = SimpleNamespace(models=FlakyModels())
+    assert client.json_call(system="s", user="u", schema={"type": "object"}) == {"ok": True}
+    assert len(calls) == 2
+    assert not gemini.is_transient(ValueError("400 INVALID_ARGUMENT: bad schema"))

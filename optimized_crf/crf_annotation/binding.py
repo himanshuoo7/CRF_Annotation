@@ -27,9 +27,21 @@ _HEADER_BAND = 0.22   # fraction of page height treated as the header zone
 _CARRY_EVIDENCE = 2   # field labels a page must share with the form it inherits
 
 
+# "1.1 ", "2. ", "3) ", "Q4 " - question numbering a CRF prints and an EDC
+# label does not carry.
+_NUMBERING = re.compile(
+    r"^(?:q(?:uestion)?\s*\d{1,3}[.):]?"     # Q4, Question 4)
+    r"|\d{1,3}(?:\.\d{1,3})+[.):]?"          # 1.1, 2.3.1.
+    r"|\d{1,3}[.):])"                         # 2. 3) 4:  - a bare "2 weeks" is not numbering
+    r"\s+(?=\S)"
+)
+
+
 def normalise(text: object) -> str:
-    """Lower-case, collapse whitespace, drop punctuation used decoratively."""
-    cleaned = re.sub(r"[\s ]+", " ", str(text or "").strip().lower())
+    """Lower-case, collapse whitespace, drop question numbering and
+    punctuation used decoratively."""
+    cleaned = re.sub(r"[\s\u00a0]+", " ", str(text or "").strip().lower())
+    cleaned = _NUMBERING.sub("", cleaned)
     return cleaned.strip(" :-–—_.")
 
 

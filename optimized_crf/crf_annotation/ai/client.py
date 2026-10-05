@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
@@ -285,13 +286,24 @@ class ClaudeClient:
         user: str,
         schema: Mapping[str, Any],
     ) -> Optional[dict[str, Any]]:
-        try:
-            reply = gemini.request(
-                client, model=self.settings.model, max_tokens=self.settings.max_tokens,
-                effort=self.settings.effort, system=system, user=user, schema=schema,
-            )
-        except Exception as exc:  # noqa: BLE001 - never fail a run over AI assist
-            logger.error("Gemini request failed: %s", exc)
+        reply = None
+        for attempt in range(1 + len(gemini.RETRY_DELAYS)):
+            try:
+                reply = gemini.request(
+                    client, model=self.settings.model, max_tokens=self.settings.max_tokens,
+                    effort=self.settings.effort, system=system, user=user, schema=schema,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 - never fail a run over AI assist
+                # A timeout or an overloaded server is worth another try; a
+                # whole form left unmapped because one call blinked is not.
+                if attempt < len(gemini.RETRY_DELAYS) and gemini.is_transient(exc):
+                    logger.warning("Gemini request failed (%s); retrying", str(exc)[:80])
+                    time.sleep(gemini.RETRY_DELAYS[attempt])
+                    continue
+                logger.error("Gemini request failed: %s", exc)
+                return None
+        if reply is None:
             return None
 
         self.calls += 1

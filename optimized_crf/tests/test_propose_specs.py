@@ -52,11 +52,10 @@ def test_cdisc_rules_place_common_forms_and_fields_without_a_model():
     placed = {(m.field_oid, m.variable, m.testcd) for m in proposal.mappings}
     assert ("BRTHDT", "BRTHDTC", "") in placed
     assert ("AESTDT", "AESTDTC", "") in placed
-    assert ("AESER", "AESER", "") in placed
+    assert "AE_FORM.AESER" in proposal.unmapped        # "Serious?" is a question: left for the model
     assert ("SYS", "VSORRES", "SYSBP") in placed
     assert ("VSDAT", "VSDTC", "") in placed
     assert all(m.source == "rule" for m in proposal.mappings)
-    assert proposal.unmapped == []
 
 
 def test_a_large_study_is_asked_in_small_batches_so_answers_are_not_truncated():
@@ -152,12 +151,12 @@ def test_rules_from_a_real_study_place_each_field_correctly():
     assert placed["SUBJ"] == "DM.SUBJID" and placed["SITE"] == "DM.SITEID"
     assert placed["SUBJ2"] == "DM.SUBJID"
     assert placed["DRUG"] == "CM.CMTRT"
-    assert placed["WHY"] == "CM.CMINDC" and placed["ONG"] == "CM.CMENRTPT"
-    assert placed["ACN"] == "AE.AEACN"
+    assert placed["WHY"] == "CM.CMINDC"                         # terse label: the rule places it
     assert placed["ANYSAE"] == "AE.AESER"
     assert "ANYCM" not in placed and "ANYAE" not in placed      # NOT SUBMITTED
     assert "BRADY" not in placed                                # not a vital-sign PULSE
-    assert proposal.unmapped == ["EG_FORM.BRADY"]               # left for the model
+    # questions and long labels are the model's: rules matched them by accident
+    assert sorted(proposal.unmapped) == ["AE_FORM.ACN", "CM_FORM.ONG", "EG_FORM.BRADY"]
 
 
 def test_the_same_question_on_two_forms_gets_the_same_code():

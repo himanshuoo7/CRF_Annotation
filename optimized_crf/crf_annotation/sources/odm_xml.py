@@ -136,7 +136,14 @@ class OdmXmlSource:
         for index, (oid, element) in enumerate(form_defs.items()):
             if not oid:
                 continue
-            label = _translated_text(_child(element, "Description")) or element.get("Name", oid)
+            # The Name is the form's title ("Adverse Events"); a Description is
+            # often its instructions ("Indicate whether ..."), which no page
+            # header prints. Only a technical Name (DM_FORM) gives way to a
+            # short Description.
+            name = (element.get("Name") or "").strip()
+            description = _translated_text(_child(element, "Description")).strip()
+            technical = not name or (" " not in name and ("_" in name or name.isupper()))
+            label = description if technical and description and len(description) <= 60 else (name or description or oid)
             forms.append(
                 Form(
                     oid=oid,
@@ -245,7 +252,14 @@ class OdmXmlSource:
         for index, (oid, element) in enumerate(event_defs.items()):
             if not oid:
                 continue
-            label = _translated_text(_child(element, "Description")) or element.get("Name", oid)
+            # The Name is the form's title ("Adverse Events"); a Description is
+            # often its instructions ("Indicate whether ..."), which no page
+            # header prints. Only a technical Name (DM_FORM) gives way to a
+            # short Description.
+            name = (element.get("Name") or "").strip()
+            description = _translated_text(_child(element, "Description")).strip()
+            technical = not name or (" " not in name and ("_" in name or name.isupper()))
+            label = description if technical and description and len(description) <= 60 else (name or description or oid)
             visits.append(
                 Visit(
                     oid=oid,

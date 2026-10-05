@@ -151,3 +151,20 @@ def test_odm_items_sharing_a_name_stay_separate_fields(tmp_path):
 </ODM>""")
     design = load_study_design([odm])
     assert sorted(f.oid for f in design.fields) == ["I.76", "I.77", "Urea"]
+
+
+def test_odm_form_title_is_its_name_not_its_instructions(tmp_path):
+    odm = tmp_path / "forms.xml"
+    odm.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3" ODMVersion="1.3.2">
+  <Study OID="S.1"><MetaDataVersion OID="MDV.1" Name="v1">
+    <FormDef OID="F.1" Name="Background Medications"><Description><TranslatedText>Indicate whether the listed class of medication was prescribed</TranslatedText></Description>
+      <ItemGroupRef ItemGroupOID="IG.1" Mandatory="Yes"/></FormDef>
+    <FormDef OID="F.2" Name="DM_FORM"><Description><TranslatedText>Demographics</TranslatedText></Description>
+      <ItemGroupRef ItemGroupOID="IG.1" Mandatory="Yes"/></FormDef>
+    <ItemGroupDef OID="IG.1" Name="G"><ItemRef ItemOID="I.1" Mandatory="No"/></ItemGroupDef>
+    <ItemDef OID="I.1" Name="X" DataType="text"><Question><TranslatedText>X?</TranslatedText></Question></ItemDef>
+  </MetaDataVersion></Study>
+</ODM>""")
+    labels = {form.oid: form.label for form in load_study_design([odm]).forms}
+    assert labels == {"F.1": "Background Medications", "F.2": "Demographics"}

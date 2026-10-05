@@ -170,6 +170,11 @@ def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass:
         if domain == "AE" and re.search(r"(?<!non-)(?<!non )\bserious\b", label, re.IGNORECASE):
             return ProposedMapping(form_oid, field_oid, label, domain, "AESER", reason="SAE screening question")
         return _SKIP
+    if _is_question(label):
+        # Label patterns are for terse EDC labels ("Event", "Start Date").
+        # A full question ("What is the date the adverse event started?")
+        # matches them by accident; the model reads it properly.
+        return None
     date = _match(_DATES, label)
     if date and domain != "DM":
         return ProposedMapping(form_oid, field_oid, label, domain, f"{domain}{date}", reason="date pattern")
@@ -202,6 +207,16 @@ def _domain_of_variable(variable: str) -> str:
     if len(variable) > 2 and variable[2:] in _PREFIXED_SUFFIXES and _DOMAIN.match(variable[:2]):
         return variable[:2]
     return ""
+
+
+_QUESTION_START = re.compile(
+    r"^(what|which|when|where|why|how|who|is|are|was|were|did|does|do|has|have|had|can|will|if|"
+    r"please|specify|indicate|provide|record|describe|list)\b", re.IGNORECASE)
+
+
+def _is_question(label: str) -> bool:
+    text = label.strip()
+    return text.endswith("?") or bool(_QUESTION_START.match(text)) or len(text.split()) > 6
 
 
 def _make_consistent(mappings: list[ProposedMapping]) -> int:
