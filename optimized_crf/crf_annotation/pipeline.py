@@ -154,7 +154,7 @@ def run(job: CrfJob) -> AnnotationResult:
             visit_matrix = _visit_matrix_for_rerun(job)
             counts = {}
 
-        shutil.copy2(job.crf, workspace.working_pdf)
+        shutil.copyfile(job.crf, workspace.working_pdf)  # contents only, see workspace.py
         bookmarked = workspace.temp_dir / "acrf_bookmarked.pdf"
         add_outline(
             workspace.working_pdf, bookmarked, coordinates, visit_matrix,

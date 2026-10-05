@@ -170,7 +170,8 @@ class Workspace:
     def _atomic_publish(source: Path, destination: Path) -> None:
         staged = destination.with_name(f".{destination.name}.staging")
         try:
-            shutil.copy2(source, staged)
+            # contents only: object-storage mounts (Cloud Run + GCS) refuse utime
+            shutil.copyfile(source, staged)
             os.replace(staged, destination)   # atomic within one filesystem
         finally:
             if staged.exists():
