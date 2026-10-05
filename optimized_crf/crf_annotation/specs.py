@@ -225,8 +225,10 @@ def _split_vars(value: Any) -> list[str]:
         names: list[str] = []
         for item in value:
             if isinstance(item, str):
-                if item.strip().strip('[]"\' '):
-                    names.append(item.strip().strip('[]"\' '))
+                # exact names: only whitespace is trimmed, so a name that ends
+                # in a quote (Patient must be classified "operable") survives
+                if item.strip():
+                    names.append(item.strip())
             else:
                 names.extend(_split_vars(item))
         return names

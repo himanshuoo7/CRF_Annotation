@@ -306,3 +306,15 @@ def test_rules_name_whole_labels_and_leave_lookalikes_to_the_model():
     placed = {m.field_oid: m.variable for m in proposal.mappings}
     assert placed == {"TERM": "AETERM", "SEV": "AESEV", "REL": "AEREL", "RACE": "AEOUT"}
     assert sorted(proposal.unmapped) == ["AE_FORM.RELNST", "AE_FORM.SMIE"]
+
+
+def test_a_field_named_with_quotes_keeps_its_annotation(tmp_path):
+    name = 'Patient must be classified "operable"'
+    design = _design(("IE_FORM", "Inclusion criteria", [(name, name)]))
+    client = FakeClient({"forms": [{"form_oid": "IE_FORM", "domain": "IE", "domain_label": "IE", "class": "FINDINGS",
+                                    "fields": [{"field_oid": name, "domain": "", "kind": "finding", "variable": "IEORRES",
+                                                "testcd": "INCL09", "qnam": "", "confidence": 0.9, "reason": "criterion"}]}]})
+    from crf_annotation.specs import SpecCatalog
+
+    catalog = SpecCatalog.load(write_proposal(propose_mappings(design, client), tmp_path))
+    assert list(catalog.mappings["RSRC_VAR"]) == [name]
