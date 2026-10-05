@@ -220,7 +220,7 @@ def test_unmapped_variables_ignore_annotated_ones():
 
 # --- derived / assigned SDTM variables are not annotated -------------------
 @pytest.mark.parametrize("variable", [
-    "USUBJID", "STUDYID", "SITEID", "DOMAIN", "EPOCH", "ARMCD",
+    "USUBJID", "STUDYID", "DOMAIN", "EPOCH", "ARMCD",
     "AESEQ", "VSSEQ", "LBSEQ",          # --SEQ
     "LBSTRESC", "LBSTRESN", "VSSTRESU",  # --STRES*
     "AESTDY", "AEENDY", "LBDY",          # --STDY / --ENDY / --DY
@@ -234,6 +234,7 @@ def test_derived_variables_are_recognised(variable):
 
 @pytest.mark.parametrize("variable", [
     "AETERM", "BRTHDTC", "SEX", "RACE", "AESER", "VSORRES", "QVAL",
+    "SUBJID", "SITEID",                 # the subject and site numbers are collected
     "AESTDTC", "LBORRES", "SEQUENCE",   # not --SEQ: wrong length
     "DY", "", None,
 ])

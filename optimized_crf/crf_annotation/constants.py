@@ -104,7 +104,9 @@ PDF_KEYWORDS: Final = "aCRF"
 # `--SEQ` covers AESEQ, VSSEQ, LBSEQ and so on.
 DERIVED_VARIABLES: Final = frozenset(
     {
-        "STUDYID", "USUBJID", "SUBJID", "SITEID", "DOMAIN", "RFSTDTC",
+        # SUBJID and SITEID are collected (the subject and site numbers on the
+        # CRF) and annotated; USUBJID is derived from them.
+        "STUDYID", "USUBJID", "DOMAIN", "RFSTDTC",
         "RFENDTC", "ARMNRS", "ARMCD", "ACTARMCD", "EPOCH",
         "--SEQ", "--STRESC", "--STRESN", "--STRESU",
         "--DY", "--STDY", "--ENDY",

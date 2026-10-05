@@ -37,6 +37,7 @@ from .merge import (
     build_form_fields,
     mark_not_submitted,
     match_fields,
+    once_per_page,
     unmapped_variables,
 )
 from .pdf_text import extract_items
@@ -209,6 +210,7 @@ def _from_specs(job: CrfJob):
     unmapped = unmapped_variables(annotated)
     if job.matching.mark_not_submitted:
         annotated = mark_not_submitted(annotated)
+    annotated = once_per_page(annotated)
 
     placed, stats = place_annotations(annotated, geometry)
 

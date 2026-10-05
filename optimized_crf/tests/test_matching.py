@@ -457,3 +457,17 @@ def test_a_continuation_page_inherits_its_form_only_on_evidence():
     bound = bind_forms(items, design)
     by_page = bound.groupby("PAGE_NO")["FORM_OID"].first().to_dict()
     assert by_page == {1: "AE_FORM", 2: "AE_FORM", 3: "", 4: ""}
+
+
+def test_a_question_wrapped_over_lines_gets_one_box():
+    from crf_annotation.merge import once_per_page
+
+    frame = pd.DataFrame([
+        {"PAGE_NO": 1, "DS_OID": "AE", "VAR_OID": "AEREL", "ATEXT": "AE.AEREL", "Y0": 500, "X0": 60},
+        {"PAGE_NO": 1, "DS_OID": "AE", "VAR_OID": "AEREL", "ATEXT": "AE.AEREL", "Y0": 488, "X0": 60},
+        {"PAGE_NO": 1, "DS_OID": "AE", "VAR_OID": "AEREL", "ATEXT": "AE.AEREL", "Y0": 476, "X0": 60},
+        {"PAGE_NO": 2, "DS_OID": "AE", "VAR_OID": "AEREL", "ATEXT": "AE.AEREL", "Y0": 476, "X0": 60},
+        {"PAGE_NO": 1, "DS_OID": "AE", "VAR_OID": "AEOUT", "ATEXT": "AE.AEOUT", "Y0": 400, "X0": 60},
+    ])
+    out = once_per_page(frame)
+    assert list(out["ATEXT"]) == ["AE.AEREL", "", "", "AE.AEREL", "AE.AEOUT"]

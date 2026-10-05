@@ -56,24 +56,44 @@ _FORM_RULES: Sequence[tuple[str, str, str, str]] = (
     (r"subject characteristic", "SC", "Subject Characteristics", "FINDINGS"),
 )
 
+_DOMAIN_LABELS = {domain: label for _, domain, label, _ in _FORM_RULES}
+
 # field label → variable suffix (prefixed with the domain) or a full name
 _FIELD_RULES: dict[str, Sequence[tuple[str, str]]] = {
     "DM": ((r"date of birth|birth ?date|\bdob\b", "BRTHDTC"), (r"\bsex\b|gender", "SEX"),
            (r"\brace\b", "RACE"), (r"ethnic", "ETHNIC"), (r"country", "COUNTRY"), (r"^age\b", "AGE")),
-    "AE": ((r"term|event|verbatim|description", "AETERM"), (r"serious", "AESER"),
+    # Specific before generic: "Action taken ... as a result of the Non-Serious
+    # AE" is AEACN, not AESER, and is not an AE term.
+    "AE": ((r"action taken", "AEACN"), (r"relat|causal", "AEREL"),
            (r"severity|intensity|grade", "AESEV"), (r"outcome", "AEOUT"),
-           (r"relat|causal", "AEREL"), (r"action taken", "AEACN")),
+           (r"(?<!non-)(?<!non )\bserious(ness)?\b", "AESER"),
+           (r"term|event|verbatim|description", "AETERM")),
     "MH": ((r"term|condition|diagnosis|verbatim", "MHTERM"),),
-    "CM": ((r"medication|drug|treatment name|trade name|generic name", "CMTRT"), (r"indication", "CMINDC"),
+    "CM": ((r"indication|reason for (medication|treatment|use)", "CMINDC"),
+           (r"ongoing|continuing", "CMENRTPT"),
            (r"\bdose\b|dosage", "CMDOSE"), (r"unit", "CMDOSU"), (r"frequency", "CMDOSFRQ"),
-           (r"route", "CMROUTE")),
+           (r"route", "CMROUTE"),
+           (r"^(medication|drug|treatment)( name)?$|(drug|medication|treatment|trade|generic) name", "CMTRT")),
     "EX": ((r"\bdose\b|amount", "EXDOSE"), (r"unit", "EXDOSU"), (r"route", "EXROUTE")),
     "DS": ((r"reason|status|disposition", "DSTERM"),),
 }
 
+# Collected on every form, submitted once in DM: the subject and site numbers.
+_IDENTIFIERS: Sequence[tuple[str, str]] = (
+    (r"^(subject|patient|participant) ?(identifier|id|number|no\.?)$|^screening (number|no\.?)$", "SUBJID"),
+    (r"^(site|cent(er|re)|investigator site) ?(identifier|id|number|no\.?)?$", "SITEID"),
+)
+
+# "Did the subject experience any adverse events?" / "Were any medications
+# taken?" only gate the log rows below them: collected, not submitted. On an
+# SAE form the same question is the seriousness flag.
+_SCREENING_QUESTION = re.compile(r"^(did|were|was|has|have)\b.*\b(any|experience)\b", re.IGNORECASE)
+_SCREENED_DOMAINS = {"AE", "CM", "MH", "PR"}
+_SKIP = object()
+
 # findings tests: field label → TESTCD
 _TESTS: Sequence[tuple[str, str]] = (
-    (r"systolic", "SYSBP"), (r"diastolic", "DIABP"), (r"pulse|heart rate", "PULSE"),
+    (r"systolic", "SYSBP"), (r"diastolic", "DIABP"), (r"^(pulse|heart rate)\b", "PULSE"),
     (r"temperature", "TEMP"), (r"respirat", "RESP"), (r"weight", "WEIGHT"),
     (r"height", "HEIGHT"), (r"\bbmi\b|body mass", "BMI"), (r"oxygen|spo2|saturation", "OXYSAT"),
 )
@@ -134,13 +154,21 @@ def _form_domain(label: str) -> Optional[tuple[str, str, str]]:
     return None
 
 
-def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass: str) -> Optional[ProposedMapping]:
-    """A deterministic proposal for one field, or None."""
+def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass: str) -> Any:
+    """A deterministic proposal for one field, `_SKIP` (not submitted), or None."""
+    identifier = _match(_IDENTIFIERS, label.strip())
+    if identifier:
+        return ProposedMapping(form_oid, field_oid, label, "DM", identifier, reason="subject/site identifier")
+    if domain in _SCREENED_DOMAINS and _SCREENING_QUESTION.search(label.strip()):
+        if domain == "AE" and re.search(r"(?<!non-)(?<!non )\bserious\b", label, re.IGNORECASE):
+            return ProposedMapping(form_oid, field_oid, label, domain, "AESER", reason="SAE screening question")
+        return _SKIP
     date = _match(_DATES, label)
     if date and domain != "DM":
         return ProposedMapping(form_oid, field_oid, label, domain, f"{domain}{date}", reason="date pattern")
     if klass == "FINDINGS":
-        testcd = _match(_TESTS, label)
+        # The vital-sign tests: "heart rate" inside an ECG rhythm label is not PULSE.
+        testcd = _match(_TESTS, label) if domain == "VS" else ""
         if testcd:
             return ProposedMapping(form_oid, field_oid, label, domain, f"{domain}ORRES", testcd=testcd,
                                    reason=f"{testcd} result")
@@ -149,6 +177,31 @@ def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass:
     if variable:
         return ProposedMapping(form_oid, field_oid, label, domain, variable, reason="CDISC label pattern")
     return None
+
+
+def _make_consistent(mappings: list[ProposedMapping]) -> int:
+    """The same question on two forms gets the same annotation.
+
+    A 12-lead and a telemetry ECG form both ask "Atrial fibrillation"; batches
+    answered separately can code it ATFIB on one and ATRFIB on the other, which
+    no reviewer accepts. The first rule-based (else most confident) answer wins.
+    """
+    chosen: dict[tuple[str, str], ProposedMapping] = {}
+    ranked = sorted(mappings, key=lambda m: (m.source != "rule", -m.confidence))
+    for mapping in ranked:
+        chosen.setdefault((mapping.domain, normalise_label(mapping.field_label)), mapping)
+    changed = 0
+    for mapping in mappings:
+        best = chosen[(mapping.domain, normalise_label(mapping.field_label))]
+        if (mapping.variable, mapping.testcd, mapping.qnam) != (best.variable, best.testcd, best.qnam):
+            mapping.variable, mapping.testcd, mapping.qnam = best.variable, best.testcd, best.qnam
+            mapping.reason = f"{mapping.reason}; aligned with the same field on {best.form_oid}".lstrip("; ")
+            changed += 1
+    return changed
+
+
+def normalise_label(label: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", label.lower()).strip()
 
 
 _SYSTEM = (
@@ -250,6 +303,8 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
     for item in design.fields:
         domain = proposal.domains.get(item.form_oid)
         mapping = _rule_mapping(item.form_oid, item.oid, item.label, domain[0], domain[2]) if domain else None
+        if mapping is _SKIP:
+            continue  # collected, not submitted: annotated NOT SUBMITTED downstream
         if mapping:
             proposal.mappings.append(mapping)
         else:
@@ -292,6 +347,9 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
                 confidence=float(entry.get("confidence") or 0), reason=str(entry.get("reason") or ""), source="ai",
             ))
 
+    aligned = _make_consistent(proposal.mappings)
+    if aligned:
+        logger.info("Aligned %d mapping(s) with the same field on another form", aligned)
     proposal.unmapped = [f"{oid}.{f['field_oid']}" for oid, fields in pending.items() for f in fields
                          if f"{oid}.{f['field_oid']}" not in answered]
     logger.info("Proposed %d mapping(s): %d by rule, %d by model; %d field(s) left unmapped",
@@ -308,6 +366,9 @@ def to_spec_documents(proposal: Proposal) -> dict[str, dict[str, Any]]:
     documents: dict[str, dict[str, Any]] = {}
     for mapping in proposal.mappings:
         domain, label, klass = proposal.domains.get(mapping.form_oid, (mapping.domain, mapping.domain, ""))
+        if mapping.domain and mapping.domain != domain:
+            # collected here, submitted elsewhere (the subject number, into DM)
+            domain, label, klass = mapping.domain, _DOMAIN_LABELS.get(mapping.domain, mapping.domain), ""
         if mapping.qnam:
             name = f"SUPP{domain}"
             doc = documents.setdefault(f"{mapping.form_oid}__{name}", {

@@ -128,3 +128,52 @@ def test_a_run_with_only_a_crf_and_a_design_annotates_from_proposed_specs(study)
     assert result.proposed_specs["proposed"] >= 5
     assert result.to_dict()["proposed_specs"] == result.proposed_specs
     assert (study["out"] / "proposed_specs" / PROPOSAL_FILE).exists()
+
+
+def test_rules_from_a_real_study_place_each_field_correctly():
+    """Labels from GSK LPL107988 that the first rules got wrong."""
+    design = _design(
+        ("CM_FORM", "Concomitant Medication", [
+            ("SUBJ", "Subject Identifier"), ("ANYCM", "Were any concomitant medications taken by the subject?"),
+            ("DRUG", "Drug Name"), ("WHY", "Reason for medication"), ("ONG", "Ongoing medication?")]),
+        ("DM_FORM", "Demography", [("SITE", "Center Number")]),
+        ("AE_FORM", "Non-serious adverse events", [
+            ("ANYAE", "Did the subject experience any non-serious adverse events during the study?"),
+            ("ACN", "Action Taken with Investigational Product(s) as a Result of the Non-Serious AE")]),
+        ("SAE_FORM", "Serious Adverse Events", [
+            ("ANYSAE", "Did the subject experience a serious adverse event during the study?")]),
+        ("EG_FORM", "ECG", [("BRADY", "ECG Rhythm Sinus bradycardia (heart rate < 30 beats/min)")]),
+    )
+    proposal = propose_mappings(design, client=None)
+    placed = {m.field_oid: f"{m.domain}.{m.variable}" for m in proposal.mappings}
+
+    assert placed["SUBJ"] == "DM.SUBJID" and placed["SITE"] == "DM.SITEID"
+    assert placed["DRUG"] == "CM.CMTRT"
+    assert placed["WHY"] == "CM.CMINDC" and placed["ONG"] == "CM.CMENRTPT"
+    assert placed["ACN"] == "AE.AEACN"
+    assert placed["ANYSAE"] == "AE.AESER"
+    assert "ANYCM" not in placed and "ANYAE" not in placed      # NOT SUBMITTED
+    assert "BRADY" not in placed                                # not a vital-sign PULSE
+    assert proposal.unmapped == ["EG_FORM.BRADY"]               # left for the model
+
+
+def test_the_same_question_on_two_forms_gets_the_same_code():
+    design = _design(("EG1", "12-Lead ECG Abnormalities", [("AF", "ECG Rhythm Atrial fibrillation")]),
+                     ("EG2", "Telemetry ECG Abnormalities", [("AF2", "ECG Rhythm Atrial fibrillation")]))
+
+    def answer(form, field, testcd, confidence):
+        return {"form_oid": form, "domain": "EG", "domain_label": "ECG", "class": "FINDINGS", "fields": [
+            {"field_oid": field, "kind": "finding", "variable": "EGORRES", "testcd": testcd, "qnam": "",
+             "confidence": confidence, "reason": "rhythm"}]}
+
+    client = FakeClient({"forms": [answer("EG1", "AF", "ATFIB", 0.9), answer("EG2", "AF2", "ATRFIB", 0.8)]})
+    proposal = propose_mappings(design, client)
+    assert {m.testcd for m in proposal.mappings} == {"ATFIB"}
+
+
+def test_an_identifier_on_any_form_is_written_to_the_dm_spec():
+    design = _design(("CM_FORM", "Concomitant Medication", [("SUBJ", "Subject Identifier"), ("DRUG", "Drug Name")]))
+    documents = to_spec_documents(propose_mappings(design, client=None))
+    assert documents["CM_FORM__DM"]["variables"][0]["variable"] == "SUBJID"
+    assert documents["CM_FORM__DM"]["domain"]["functions"] == [{"source_dataset": "CM_FORM"}]
+    assert documents["CM_FORM__CM"]["variables"][0]["variable"] == "CMTRT"

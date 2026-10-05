@@ -253,6 +253,32 @@ def mark_not_submitted(merged: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def once_per_page(annotated: pd.DataFrame) -> pd.DataFrame:
+    """One box per field per page.
+
+    A question that wraps over three lines matches its field three times; the
+    annotation belongs once, beside its first line. Later copies keep their row
+    (and its match evidence) but lose the text, so nothing is drawn for them.
+    """
+    result = annotated.copy()
+    if result.empty or not {"PAGE_NO", "VAR_OID", "ATEXT"} <= set(result.columns):
+        return result
+    has_text = result["ATEXT"].fillna("").astype(str).str.strip() != ""
+    has_field = result["VAR_OID"].notna() & (result["VAR_OID"].astype(str) != "")
+    candidates = result[has_text & has_field]
+    if candidates.empty:
+        return result
+    # Topmost first: Y is bottom-origin, so the first line has the largest Y.
+    order = candidates.sort_values(["PAGE_NO", "Y0", "X0"], ascending=[True, False, True], kind="stable") \
+        if {"Y0", "X0"} <= set(candidates.columns) else candidates
+    repeats = order.duplicated(subset=["PAGE_NO", "DS_OID", "VAR_OID", "ATEXT"], keep="first")
+    dropped = order.index[repeats]
+    if len(dropped):
+        result.loc[dropped, "ATEXT"] = ""
+        logger.info("Kept one box per field per page: %d repeat(s) on wrapped lines removed", len(dropped))
+    return result
+
+
 def unmapped_variables(merged: pd.DataFrame) -> pd.DataFrame:
     """EDC fields that appear on the CRF but carry no SDTM annotation."""
     columns = ["RSRC_DS", "RSRC_VAR", "ATEXT", "PAGE_NO"]
