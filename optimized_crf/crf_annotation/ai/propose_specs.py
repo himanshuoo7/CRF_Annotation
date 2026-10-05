@@ -202,13 +202,31 @@ def normalise_label(label: str) -> str:
 
 
 _SYSTEM = (
-    "You map clinical-trial EDC fields to CDISC SDTM (SDTMIG 3.4) for an annotated CRF. "
-    "For each field, give the SDTM domain and variable it is collected into. Use findings "
-    "structure for test results: variable --ORRES with the test code in testcd (e.g. VSORRES, "
-    "testcd SYSBP). Use a supplemental qualifier (kind 'supp', with a QNAM of at most 8 "
-    "characters) for collected data with no standard variable. Use kind 'skip' for operational "
-    "fields that are not submitted (e.g. 'Was the form completed?', page status). Never invent a "
-    "domain; only use standard SDTM domains. Confidence is 0 to 1."
+    "You map clinical-trial EDC fields to CDISC SDTM (SDTMIG 3.4) for an annotated CRF that a "
+    "regulator will read. For each field, give the SDTM domain and variable it is collected into. "
+    "Forms come from many sponsors and EDC systems, so judge each field by what it collects, not by "
+    "the exact wording.\n\n"
+    "Conventions to follow:\n"
+    "- Findings: a test result, measurement, or a yes/no 'is this abnormality present' question on a "
+    "findings form (ECG, labs, vital signs, physical exam, questionnaires, eligibility criteria) is "
+    "kind 'finding': variable --ORRES with the test code in testcd (e.g. VSORRES, testcd SYSBP). "
+    "Each ECG finding, including every type of myocardial infarction, is a finding of its own, "
+    "never 'skip'. Use the CDISC Controlled Terminology test code when one exists; otherwise make a "
+    "clear code of at most 8 characters. Give the same question the same code on every form.\n"
+    "- Eligibility: each inclusion or exclusion criterion question is IE, IEORRES, with the "
+    "criterion identifier as testcd (INCL01, EXCL03, ...). Every criterion on the form is mapped, "
+    "not only some.\n"
+    "- Dates: the visit or assessment date on a form is that form's own --DTC (VSDTC, EGDTC, "
+    "DSDTC, ...). A field may belong to a different domain from its form: the date of "
+    "randomisation is DS.DSSTDTC (a disposition event), wherever it is collected. Set a field's "
+    "domain only when it differs from its form's; otherwise leave it empty.\n"
+    "- Supplemental qualifiers: collected data with no standard variable is kind 'supp', with a "
+    "QNAM of at most 8 characters.\n"
+    "- Not submitted: kind 'skip' only for operational fields, such as 'Was the form completed?', "
+    "page status, or a yes/no question whose only purpose is to open the rows below it "
+    "('Were any medications taken?'). Collected clinical data is never skipped; if you are unsure, "
+    "map it and give a low confidence so a reviewer looks at it.\n"
+    "- Only use standard SDTM domains. Confidence is 0 to 1."
 )
 
 _SCHEMA: dict[str, Any] = {
@@ -229,6 +247,7 @@ _SCHEMA: dict[str, Any] = {
                             "type": "object",
                             "properties": {
                                 "field_oid": {"type": "string"},
+                                "domain": {"type": "string"},
                                 "kind": {"type": "string", "enum": ["variable", "finding", "supp", "skip"]},
                                 "variable": {"type": "string"},
                                 "testcd": {"type": "string"},
@@ -236,7 +255,7 @@ _SCHEMA: dict[str, Any] = {
                                 "confidence": {"type": "number"},
                                 "reason": {"type": "string"},
                             },
-                            "required": ["field_oid", "kind", "variable", "testcd", "qnam", "confidence", "reason"],
+                            "required": ["field_oid", "domain", "kind", "variable", "testcd", "qnam", "confidence", "reason"],
                             "additionalProperties": False,
                         },
                     },
@@ -280,7 +299,7 @@ def _ask_model(client: Any, forms: list[dict[str, Any]]) -> list[dict[str, Any]]
             "Propose SDTM mappings for these EDC forms and fields (labels as printed on the CRF):\n"
             + json.dumps(batch, indent=1)
         )
-        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/2")
+        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/3")
         return list((answer or {}).get("forms") or [])
 
     with ThreadPoolExecutor(max_workers=PARALLEL_CALLS) as pool:
@@ -326,8 +345,11 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
         if oid not in labels or not _DOMAIN.match(domain):
             continue
         proposal.domains.setdefault(oid, (domain, str(form.get("domain_label") or domain), str(form.get("class") or "")))
-        domain = proposal.domains[oid][0]
+        form_domain = proposal.domains[oid][0]
         for entry in form.get("fields") or ():
+            # a field may be submitted in another domain (randomisation date -> DS)
+            own = str(entry.get("domain") or "").upper()
+            domain = own if _DOMAIN.match(own) else form_domain
             field_oid = str(entry.get("field_oid") or "")
             if (oid, field_oid) not in field_labels:
                 continue
@@ -350,6 +372,27 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
                 confidence=float(entry.get("confidence") or 0), reason=str(entry.get("reason") or ""), source="ai",
             ))
 
+    # A field the model left out of one batch is often answered for the same
+    # question on another form (a 12-lead and a telemetry ECG form): reuse it.
+    known = {}
+    for mapping in proposal.mappings:
+        known.setdefault((proposal.domains.get(mapping.form_oid, ("",))[0], normalise_label(mapping.field_label)),
+                         mapping)
+    borrowed = 0
+    for oid, fields in pending.items():
+        for item in fields:
+            if f"{oid}.{item['field_oid']}" in answered:
+                continue
+            twin = known.get((proposal.domains.get(oid, ("",))[0], normalise_label(item["label"])))
+            if twin and twin.form_oid != oid:
+                proposal.mappings.append(ProposedMapping(
+                    oid, item["field_oid"], item["label"], twin.domain, twin.variable, testcd=twin.testcd,
+                    qnam=twin.qnam, confidence=twin.confidence, source=twin.source,
+                    reason=f"same field as on {twin.form_oid}: {twin.reason}"))
+                answered.add(f"{oid}.{item['field_oid']}")
+                borrowed += 1
+    if borrowed:
+        logger.info("Reused %d mapping(s) from the same field on another form", borrowed)
     aligned = _make_consistent(proposal.mappings)
     if aligned:
         logger.info("Aligned %d mapping(s) with the same field on another form", aligned)

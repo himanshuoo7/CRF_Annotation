@@ -180,3 +180,42 @@ def test_an_identifier_on_any_form_is_written_to_the_dm_spec():
     assert documents["CM_FORM__DM"]["domain"]["functions"] == [{"source_dataset": "CM_FORM"}]
     assert documents["CM_FORM__DM"]["domain"]["label"] == "Demographics"
     assert documents["CM_FORM__CM"]["variables"][0]["variable"] == "CMTRT"
+
+
+def test_a_field_named_with_a_comma_keeps_its_annotation(tmp_path):
+    """Some EDCs use the label as the field name: 'Myocardial infarction, inferior'."""
+    design = _design(("EG_FORM", "ECG Abnormalities", [("Myocardial infarction, inferior", "Myocardial infarction, inferior")]))
+    client = FakeClient({"forms": [{"form_oid": "EG_FORM", "domain": "EG", "domain_label": "ECG", "class": "FINDINGS",
+                                    "fields": [{"field_oid": "Myocardial infarction, inferior", "domain": "", "kind": "finding",
+                                                "variable": "EGORRES", "testcd": "MIINF", "qnam": "", "confidence": 0.9,
+                                                "reason": "ECG finding"}]}]})
+    from crf_annotation.specs import SpecCatalog
+
+    proposal = propose_mappings(design, client)
+    catalog = SpecCatalog.load(write_proposal(proposal, tmp_path))
+    assert list(catalog.mappings["RSRC_VAR"]) == ["Myocardial infarction, inferior"]
+
+
+def test_the_model_can_put_a_field_in_another_domain_than_its_form():
+    design = _design(("EX_FORM", "Investigational Product", [("RANDDT", "Date of Randomisation")]))
+    client = FakeClient({"forms": [{"form_oid": "EX_FORM", "domain": "EX", "domain_label": "Exposure", "class": "INTERVENTIONS",
+                                    "fields": [{"field_oid": "RANDDT", "domain": "DS", "kind": "variable", "variable": "DSSTDTC",
+                                                "testcd": "", "qnam": "", "confidence": 0.9, "reason": "randomisation"}]}]})
+    proposal = propose_mappings(design, client)
+    assert [(m.domain, m.variable) for m in proposal.mappings] == [("DS", "DSSTDTC")]
+    assert "EX_FORM__DS" in to_spec_documents(proposal)
+
+
+
+def test_a_field_the_model_skipped_reuses_the_same_question_on_another_form():
+    design = _design(("EG1", "12-Lead ECG Abnormalities", [("LAD1", "Left axis deviation")]),
+                     ("EG2", "Telemetry ECG Abnormalities", [("LAD2", "Left axis deviation")]))
+    client = FakeClient({"forms": [
+        {"form_oid": "EG1", "domain": "EG", "domain_label": "ECG", "class": "FINDINGS",
+         "fields": [{"field_oid": "LAD1", "domain": "", "kind": "finding", "variable": "EGORRES", "testcd": "LAD",
+                     "qnam": "", "confidence": 0.9, "reason": "axis"}]},
+        {"form_oid": "EG2", "domain": "EG", "domain_label": "ECG", "class": "FINDINGS", "fields": []},
+    ]})
+    proposal = propose_mappings(design, client)
+    assert {(m.field_oid, m.testcd) for m in proposal.mappings} == {("LAD1", "LAD"), ("LAD2", "LAD")}
+    assert proposal.unmapped == []

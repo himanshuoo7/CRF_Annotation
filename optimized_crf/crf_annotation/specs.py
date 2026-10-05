@@ -219,9 +219,16 @@ def _split_vars(value: Any) -> list[str]:
     if isinstance(value, str):
         return [part.strip().strip('[]"\' ') for part in value.split(",") if part.strip()]
     if isinstance(value, (list, tuple)):
+        # In a list every entry is already one name, and some EDCs use the
+        # label as the field name: "Myocardial infarction, inferior" must not
+        # be split at its comma. Only a single string is a comma-joined list.
         names: list[str] = []
         for item in value:
-            names.extend(_split_vars(item))
+            if isinstance(item, str):
+                if item.strip().strip('[]"\' '):
+                    names.append(item.strip().strip('[]"\' '))
+            else:
+                names.extend(_split_vars(item))
         return names
     return [str(value)]
 
