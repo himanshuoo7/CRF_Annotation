@@ -303,6 +303,19 @@ def test_a_box_does_not_slide_into_the_next_column():
     # middle-column field; the space beside it is taken, the right column is free
     row = pd.Series({"X0": 210.0, "X1": 300.0, "Y0": 500.0, "Y1": 510.0, "ATEXT": "AE.AESEV"})
     taken = _Occupancy([(210.0, 500.0, 300.0, 510.0), (300.0, 495.0, 400.0, 515.0)])
-    rect = _place_one(row, taken, page_width=612.0, page_height=792.0)
+    rect = _place_one(row, taken, page_width=612.0, page_height=792.0, edges=[40.0, 210.0, 400.0])
     assert rect is not None
-    assert rect[0] < 400.0 and rect[1] < 500.0   # under it, not across in the next column
+    assert rect[2] <= 400.0 and rect[1] < 500.0   # under it, not across in the next column
+
+
+def test_columns_are_found_from_where_lines_start_and_indents_are_not_columns():
+    import pandas as pd
+
+    from crf_annotation.layout import column_edges, column_of
+
+    starts = [40, 40, 40, 52, 52, 52, 210, 210, 210, 222, 222, 222, 400, 400, 400, 330]
+    items = pd.DataFrame({"X0": starts})
+    edges = column_edges(items)
+    assert edges == [40.0, 208.0, 400.0]            # 52 and 222 are answer-option indents
+    left, right = column_of(222.0, edges, 592.0)    # an option in the middle column
+    assert left == 208.0 and right < 400.0

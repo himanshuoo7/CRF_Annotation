@@ -33,6 +33,34 @@ _BAND = 24.0          # vertical bucket size for the collision index
 _MAX_DROPS = 6        # how many rows down we try before giving up
 _MIN_LEFT = 20.0      # never place an annotation in the binding margin
 _TEXT_PADDING = 6.0
+_COLUMN_GAP = 80.0    # text starts closer than this are indents, not columns
+_COLUMN_LINES = 3     # lines that must start at an x for it to count as a column
+
+
+def column_edges(page_items: pd.DataFrame) -> list[float]:
+    """Where a page's text columns start, from where its lines start.
+
+    A multi-column CRF lays questions out in columns; a box placed across a
+    column edge reads as an annotation of the neighbouring question. Starts
+    used by a few lines are column candidates; ones within `_COLUMN_GAP` of a
+    column to their left are indents (answer options), not new columns.
+    """
+    starts = pd.to_numeric(page_items.get("X0", pd.Series(dtype=float)), errors="coerce").dropna()
+    if starts.empty:
+        return []
+    counts = (starts // 4 * 4).value_counts()
+    edges: list[float] = []
+    for x in sorted(counts[counts >= _COLUMN_LINES].index):
+        if not edges or x - edges[-1] >= _COLUMN_GAP:
+            edges.append(float(x))
+    return edges
+
+
+def column_of(x0: float, edges: list[float], right_limit: float) -> tuple[float, float]:
+    """The (left, right) bounds of the column a field starting at `x0` sits in."""
+    left = max((e for e in edges if e <= x0 + 4), default=_MIN_LEFT)
+    right = min((e - FIELD_GAP_X for e in edges if e > x0 + 4), default=right_limit)
+    return max(left, _MIN_LEFT), min(right, right_limit)
 
 
 def annotation_width(text: str) -> float:
@@ -96,12 +124,13 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
         # reserved at the top for domain headers.
         page_items = result[result["PAGE_NO"] == page_no]
         occupancy = _Occupancy(_item_rects(page_items))
+        edges = column_edges(page_items)
         occupancy.add((0.0, height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, width, height))
 
         # Top-to-bottom, left-to-right: stable output and better packing.
         ordered = page_rows.sort_values(["Y0", "X0"], ascending=[False, True], kind="stable")
         for index, row in ordered.iterrows():
-            rect = _place_one(row, occupancy, width, height)
+            rect = _place_one(row, occupancy, width, height, edges)
             if rect is None:
                 dropped += 1
                 continue
@@ -120,17 +149,15 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
     return result, PlacementStats(placed=placed, dropped=dropped)
 
 
-_NEAR_REACH = 60.0   # how far a box may slide sideways before dropping a row
-
-
 def _item_rects(rows: pd.DataFrame) -> list[Rect]:
     frame = rows[["X0", "Y0", "X1", "Y1"]].apply(pd.to_numeric, errors="coerce").dropna()
     return [tuple(values) for values in frame.drop_duplicates().to_numpy()]
 
 
-def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float) -> Rect | None:
-    """First free slot: to the right of the field, then rows below it in the
-    field's own column, and only then rows below from the left margin."""
+def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float,
+               edges: list[float] | None = None) -> Rect | None:
+    """First free slot inside the field's own column: beside the field, then
+    rows below it. Only when the column has no room at all, anywhere below."""
     try:
         x0 = float(row["X0"])
         x1 = float(row["X1"])
@@ -142,23 +169,20 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     box_width = annotation_width(row["ATEXT"])
     box_height = max(FIELD_ROW_HEIGHT, y1 - y0)
     right_limit = page_width - _MIN_LEFT
+    col_left, col_right = column_of(x0, edges or [], right_limit)
+    if col_right - col_left < box_width:
+        col_right = right_limit   # a box wider than its column may run on to the right
 
-    # A question in the right-hand column has no room beside it; its box must
-    # still land in that column, under it, not across the page beside another
-    # field where a reviewer would read it as that field's annotation.
-    # A wide box (a SUPP-- QNAM) in a narrow right column starts further left
-    # so it still fits under its own question.
-    own_column = max(_MIN_LEFT, min(x0, right_limit - box_width))
-    for column_start, reach in ((own_column, _NEAR_REACH), (_MIN_LEFT, page_width)):
-        for drop in range(_MAX_DROPS):
+    # A box beside or under its own question reads as that question's; one
+    # across a column edge reads as the neighbour's.
+    passes = ((max(col_left, min(x0, col_right - box_width)), col_right, _MAX_DROPS + 4),
+              (_MIN_LEFT, right_limit, _MAX_DROPS))
+    for row_start, limit, drops in passes:
+        for drop in range(drops):
             top = y0 - drop * (box_height + 2.0)
             if top < 0:
                 break
-            left = x1 + FIELD_GAP_X if drop == 0 else column_start
-            # Beside the field means near it: sliding across into the next
-            # column would put the box beside a different field. Rows below
-            # start in the field's own column and may run on past its options.
-            limit = min(right_limit, left + box_width + reach) if drop == 0 else right_limit
+            left = x1 + FIELD_GAP_X if drop == 0 else row_start
             while left + box_width <= limit:
                 candidate = (left, top, left + box_width, top + box_height)
                 if not occupancy.collides(candidate):
