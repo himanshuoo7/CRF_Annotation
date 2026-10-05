@@ -7,7 +7,7 @@ description: Generate, review and diagnose SDTM annotated CRFs (aCRFs) from a bl
 
 An **annotated CRF** is the blank case report form with each field labelled by
 the SDTM variable it maps to — `DM.BRTHDTC`, `AE.AETERM`,
-`SUPPAE.QVAL where QNAM = AESEV`. It is a regulatory submission deliverable:
+`AESEV in SUPPAE`. It is a regulatory submission deliverable:
 reviewers use it to trace a value in a dataset back to the question that
 captured it.
 
