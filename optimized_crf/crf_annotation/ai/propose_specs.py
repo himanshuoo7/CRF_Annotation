@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from ..binding import normalise
 from ..design import StudyDesign
 from ..logging_utils import get_logger
 from ..sdtm_names import SUFFIXES, is_standard_variable
@@ -70,23 +71,27 @@ DOMAIN_LABELS = {
 }
 
 # field label → variable suffix (prefixed with the domain) or a full name
+# Whole-label patterns: a rule names a label, it does not look for a word in it
+# ("Other Medically Important Event" is AESMIE, not the AE term; "Relationship
+# to Non-Study Treatment" is AERELNST, not AEREL). Anything else is the model's.
 _FIELD_RULES: dict[str, Sequence[tuple[str, str]]] = {
-    "DM": ((r"date of birth|birth ?date|\bdob\b", "BRTHDTC"), (r"\bsex\b|gender", "SEX"),
-           (r"\brace\b", "RACE"), (r"ethnic", "ETHNIC"), (r"country", "COUNTRY"), (r"^age\b", "AGE")),
-    # Specific before generic: "Action taken ... as a result of the Non-Serious
-    # AE" is AEACN, not AESER, and is not an AE term.
-    "AE": ((r"action taken", "AEACN"), (r"relat|causal", "AEREL"),
-           (r"severity|intensity|grade", "AESEV"), (r"outcome", "AEOUT"),
-           (r"(?<!non-)(?<!non )\bserious(ness)?\b", "AESER"),
-           (r"term|event|verbatim|description", "AETERM")),
-    "MH": ((r"term|condition|diagnosis|verbatim", "MHTERM"),),
-    "CM": ((r"indication|reason for (medication|treatment|use)", "CMINDC"),
-           (r"ongoing|continuing", "CMENRTPT"),
-           (r"\bdose\b|dosage", "CMDOSE"), (r"unit", "CMDOSU"), (r"frequency", "CMDOSFRQ"),
-           (r"route", "CMROUTE"),
-           (r"^(medication|drug|treatment)( name)?$|(drug|medication|treatment|trade|generic) name", "CMTRT")),
-    "EX": ((r"\bdose\b|amount", "EXDOSE"), (r"unit", "EXDOSU"), (r"route", "EXROUTE")),
-    "DS": ((r"reason|status|disposition", "DSTERM"),),
+    "DM": ((r"^(date of birth|birth ?date|dob)$", "BRTHDTC"), (r"^(sex|gender)$", "SEX"),
+           (r"^race$", "RACE"), (r"^ethnicity$|^ethnic (group|origin)$", "ETHNIC"), (r"^country$", "COUNTRY"),
+           (r"^age$", "AGE")),
+    "AE": ((r"^action taken( with (study|investigational) (drug|treatment|product)s?)?$", "AEACN"),
+           (r"^(relationship|causality|relatedness)( to (study|investigational) (drug|treatment|product))?$", "AEREL"),
+           (r"^(maximum |max\.? )?(severity|intensity)$|^(toxicity |ctcae )?grade$", "AESEV"),
+           (r"^outcome$", "AEOUT"),
+           (r"^serious(ness)?$", "AESER"),
+           (r"^(adverse event|event|ae)( term| name| description)?$|^(verbatim |reported )?term$", "AETERM")),
+    "MH": ((r"^(medical history |mh )?(term|condition|diagnosis)$|^verbatim term$", "MHTERM"),),
+    "CM": ((r"^(indication|reason for (medication|treatment|use))$", "CMINDC"),
+           (r"^(ongoing|continuing)$", "CMENRTPT"),
+           (r"^(unit )?dose$|^dosage$", "CMDOSE"), (r"^(dose )?units?$", "CMDOSU"),
+           (r"^(dose )?frequency$", "CMDOSFRQ"), (r"^route( of administration)?$", "CMROUTE"),
+           (r"^(medication|drug|treatment)( name)?$|^(trade|generic|brand) name$", "CMTRT")),
+    "EX": ((r"^dose$|^amount$", "EXDOSE"), (r"^(dose )?units?$", "EXDOSU"), (r"^route( of administration)?$", "EXROUTE")),
+    "DS": ((r"^(primary )?reason for (withdrawal|discontinuation|early termination)$|^disposition$", "DSTERM"),),
 }
 
 # Collected on every form, submitted once in DM: the subject and site numbers.
@@ -144,7 +149,13 @@ class Proposal:
         }
 
 
+def _clean(label: str) -> str:
+    """A label as rules see it: no markup, numbering or trailing punctuation."""
+    return normalise(re.sub(r"<[^>]+>", " ", str(label or ""))).rstrip("?:. ").strip()
+
+
 def _match(rules: Sequence[tuple[str, str]], text: str) -> str:
+    text = _clean(text)
     for pattern, value in rules:
         if re.search(pattern, text, re.IGNORECASE):
             return value

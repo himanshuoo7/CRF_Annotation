@@ -295,3 +295,14 @@ def test_sdtm_names():
         assert is_standard_variable(domain, variable), (domain, variable)
     for domain, variable in [("CM", "CMONGO"), ("CM", "CMDOS"), ("CM", "CMDSTXT"), ("AE", "LBORRES"), ("VS", "SEX")]:
         assert not is_standard_variable(domain, variable), (domain, variable)
+
+
+def test_rules_name_whole_labels_and_leave_lookalikes_to_the_model():
+    design = _design(("AE_FORM", "Adverse Events", [
+        ("TERM", "Adverse Event Term"), ("SEV", "Maximum Intensity"), ("REL", "Relationship to study drug"),
+        ("SMIE", "Other Medically Important Event"), ("RELNST", "Relationship to Non-Study Treatment"),
+        ("RACE", "<b>Outcome</b>")]))
+    proposal = propose_mappings(design, client=None)
+    placed = {m.field_oid: m.variable for m in proposal.mappings}
+    assert placed == {"TERM": "AETERM", "SEV": "AESEV", "REL": "AEREL", "RACE": "AEOUT"}
+    assert sorted(proposal.unmapped) == ["AE_FORM.RELNST", "AE_FORM.SMIE"]
