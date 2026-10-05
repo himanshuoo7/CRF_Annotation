@@ -35,6 +35,9 @@ _BAND = 24.0          # vertical bucket size for the collision index
 _MAX_DROPS = 6        # how many rows down we try before giving up
 _MIN_LEFT = 20.0      # never place an annotation in the binding margin
 _TEXT_PADDING = 8.0   # the box border and its inner margin
+_BLOCKER_GAP = 4.0    # clearance after the text a box steps past
+_FINE_STEP = 5.0      # vertical search step
+_COLUMN_MARGIN = 6.0  # clearance kept before the next column's text
 _COLUMN_GAP = 80.0    # text starts closer than this are indents, not columns
 _COLUMN_LINES = 3     # lines that must start at an x for it to count as a column
 
@@ -61,7 +64,7 @@ def column_edges(page_items: pd.DataFrame, min_lines: int = _COLUMN_LINES) -> li
 def column_of(x0: float, edges: list[float], right_limit: float) -> tuple[float, float]:
     """The (left, right) bounds of the column a field starting at `x0` sits in."""
     left = max((e for e in edges if e <= x0 + 4), default=_MIN_LEFT)
-    right = min((e - FIELD_GAP_X for e in edges if e > x0 + 4), default=right_limit)
+    right = min((e - _COLUMN_MARGIN for e in edges if e > x0 + 4), default=right_limit)
     return max(left, _MIN_LEFT), min(right, right_limit)
 
 
@@ -194,8 +197,10 @@ def _item_rects(rows: pd.DataFrame) -> list[Rect]:
 
 def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float,
                edges: list[float] | None = None) -> Rect | None:
-    """First free slot inside the field's own column: beside the field, then
-    rows below it. Only when the column has no room at all, anywhere below."""
+    """A free slot in the field's own column: beside it, then the rows below
+    it, on one line or wrapped onto two, then further down the column, then
+    above it. Never in another column: a box there reads as the neighbouring
+    question's annotation, which is worse than a box reported as unplaced."""
     try:
         x0 = float(row["X0"])
         x1 = float(row["X1"])
@@ -204,35 +209,55 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     except (TypeError, ValueError):
         return None
 
-    box_width = annotation_width(row["ATEXT"])
-    box_height = max(FIELD_ROW_HEIGHT, y1 - y0)
+    text = str(row["ATEXT"])
     right_limit = page_width - _MIN_LEFT
     col_left, col_right = column_of(x0, edges or [], right_limit)
-    if col_right - col_left < box_width:
-        # Too wide for its column on one line: two lines, half the width.
-        lines = two_lines(row["ATEXT"])
-        if len(lines) == 2:
-            box_width = max(annotation_width(line) for line in lines)
-            box_height = max(TWO_LINE_HEIGHT, y1 - y0)
-        if col_right - col_left < box_width:
-            col_right = right_limit   # still too wide: it may run on to the right
+    line_height = max(FIELD_ROW_HEIGHT, y1 - y0)
+    shapes = [(annotation_width(text), line_height)]
+    lines = two_lines(text)
+    if len(lines) == 2:
+        shapes.append((max(annotation_width(line) for line in lines), max(TWO_LINE_HEIGHT, y1 - y0)))
+    fitting = [shape for shape in shapes if shape[0] <= col_right - col_left]
+    if not fitting:
+        # wider than its column even wrapped: let the narrowest run on rightwards
+        fitting, col_right = [min(shapes)], right_limit
 
-    # A box beside or under its own question reads as that question's; one
-    # across a column edge reads as the neighbour's.
-    passes = ((max(col_left, min(x0, col_right - box_width)), col_right, _MAX_DROPS + 4),
-              (_MIN_LEFT, right_limit, _MAX_DROPS))
-    for row_start, limit, drops in passes:
-        for drop in range(drops):
-            top = y0 - drop * (box_height + 2.0)
-            if top < 0:
-                break
-            left = x1 + FIELD_GAP_X if drop == 0 else row_start
-            while left + box_width <= limit:
-                candidate = (left, top, left + box_width, top + box_height)
-                blocker = occupancy.blocker(candidate)
-                if blocker is None:
-                    return candidate
-                # step just past what is in the way: a narrow column has room
-                # right after a short "Yes"/"No", which a coarse step jumps over
-                left = max(left + 1.0, blocker[2] + FIELD_GAP_X)
+    def scan(top: float, start: float, width: float, height: float) -> Rect | None:
+        left = start
+        while left + width <= col_right:
+            candidate = (left, top, left + width, top + height)
+            blocker = occupancy.blocker(candidate)
+            if blocker is None:
+                return candidate
+            # step just past what is in the way: a narrow column has room
+            # right after a short "Yes"/"No", which a coarse step jumps over
+            left = max(left + 1.0, blocker[2] + _BLOCKER_GAP)
+        return None
+
+    near = _MAX_DROPS * FIELD_ROW_HEIGHT
+    # 1. beside the field, then just under it - in small steps, so the gap
+    # beside a question's own Yes/No rows is found before the next question's
+    # (both shapes at each height: the nearest slot wins, one line preferred)
+    for top in _steps(y0, max(0.0, y0 - near), -_FINE_STEP):
+        for width, height in fitting:
+            start = x1 + FIELD_GAP_X if top == y0 else max(col_left, min(x0, col_right - width))
+            found = scan(top, start, width, height)
+            if found:
+                return found
+    # 2. further down its own column, then 3. above it, in the narrowest shape
+    width, height = min(fitting)
+    row_start = max(col_left, min(x0, col_right - width))
+    for top in (*_steps(y0 - near, 0.0, -_FINE_STEP),
+                *_steps(y1 + 2.0, page_height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT - height, _FINE_STEP)):
+        found = scan(top, row_start, width, height)
+        if found:
+            return found
     return None
+
+
+def _steps(start: float, stop: float, step: float) -> list[float]:
+    values, value = [], start
+    while (step < 0 and value >= stop) or (step > 0 and value <= stop):
+        values.append(value)
+        value += step
+    return values

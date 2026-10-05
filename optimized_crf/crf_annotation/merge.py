@@ -83,6 +83,7 @@ def match_fields(
         right_on=["DS_OID", "MATCH_TEXT"],
         how="left",
     )
+    merged = _join_wrapped_labels(merged, right)
     merged["DS_OID"] = merged["FORM_OID"]
     merged["DS_NAME"] = merged["FORM_LABEL"]
     merged["MATCH_METHOD"] = merged["VAR_OID"].notna().map({True: "exact", False: ""})
@@ -91,6 +92,48 @@ def match_fields(
     matched = int(merged["VAR_OID"].notna().sum())
     logger.info("Matched %d of %d CRF text items to EDC fields (exact)", matched, len(merged))
     return merged.drop(columns=["MATCH_TEXT"]).reset_index(drop=True)
+
+
+_WRAP_GAP = 6.0       # max space between two lines of one wrapped label
+_WRAP_LINES = 6       # longest wrapped label tried (lines)
+
+
+def _join_wrapped_labels(merged: pd.DataFrame, fields: pd.DataFrame) -> pd.DataFrame:
+    """Match a label the CRF wraps over several lines.
+
+    "ECG Rhythm Sinus bradycardia (heart" / "rate 40-50 beats/min)" matches no
+    field line by line; joined, it matches exactly. Lines are joined when they
+    start at the same x and follow each other closely, and only when the
+    joined text is a label on that same form.
+    """
+    if merged.empty or not {"X0", "Y0", "Y1"} <= set(merged.columns):
+        return merged
+    lookup = {(form, text): (oid, label) for form, text, oid, label in
+              zip(fields["DS_OID"], fields["MATCH_TEXT"], fields["VAR_OID"], fields["VAR_TXT"])}
+    result = merged.copy()
+    joined_rows = 0
+    for _, page in result.groupby(["PAGE_NO", (result["X0"] // 4)], sort=False):
+        lines = page.sort_values("Y0", ascending=False)
+        indices = list(lines.index)
+        for start in range(len(indices)):
+            first = indices[start]
+            if pd.notna(result.at[first, "VAR_OID"]):
+                continue
+            texts, rows = [str(result.at[first, "ITM_TEXT"])], [first]
+            for following in indices[start + 1:start + _WRAP_LINES]:
+                if result.at[rows[-1], "Y0"] - result.at[following, "Y1"] > _WRAP_GAP:
+                    break
+                texts.append(str(result.at[following, "ITM_TEXT"]))
+                rows.append(following)
+                hit = lookup.get((result.at[first, "FORM_OID"], normalise(" ".join(texts))))
+                if hit and all(pd.isna(result.at[r, "VAR_OID"]) for r in rows):
+                    for r in rows:
+                        result.at[r, "VAR_OID"], result.at[r, "VAR_TXT"] = hit
+                    joined_rows += 1
+                    break
+    if joined_rows:
+        logger.info("Matched %d label(s) wrapped over several lines", joined_rows)
+    return result
 
 
 def dataset_key(name: object) -> str:

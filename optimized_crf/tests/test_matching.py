@@ -471,3 +471,25 @@ def test_a_question_wrapped_over_lines_gets_one_box():
     ])
     out = once_per_page(frame)
     assert list(out["ATEXT"]) == ["AE.AEREL", "", "", "AE.AEREL", "AE.AEOUT"]
+
+
+def test_a_label_wrapped_over_two_lines_matches_exactly():
+    from crf_annotation.merge import build_form_fields, match_fields
+
+    design = build(
+        "test",
+        forms=[Form(oid="EG_FORM", label="ECG Abnormalities", order=0)],
+        fields=[Field(oid="BRADY4050", form_oid="EG_FORM",
+                      label="ECG Rhythm Sinus bradycardia (heart rate 40-50 beats/min)")],
+    )
+    items = _items([
+        (1, "ECG Abnormalities", 60, 740, 200, 752),
+        (1, "ECG Rhythm Sinus bradycardia (heart", 60, 600, 230, 611),
+        (1, "rate 40-50 beats/min)", 60, 588, 160, 599),
+        (1, "Yes", 70, 570, 90, 580),
+    ])
+    matched = match_fields(items, build_form_fields(design), design)
+    by_text = dict(zip(matched["ITM_TEXT"], matched["VAR_OID"]))
+    assert by_text["ECG Rhythm Sinus bradycardia (heart"] == "BRADY4050"
+    assert by_text["rate 40-50 beats/min)"] == "BRADY4050"
+    assert pd.isna(by_text["Yes"])

@@ -347,3 +347,34 @@ def test_a_long_findings_annotation_wraps_to_fit_its_column():
     assert rect is not None
     assert rect[0] >= 208.0 and rect[2] <= 376.0            # inside its own column
     assert rect[3] - rect[1] >= TWO_LINE_HEIGHT - 0.5        # on two lines
+
+
+def test_a_box_wraps_rather_than_leaving_its_column():
+    """The AFIB case: one line fits the column but not after the 'Yes' beneath
+    the question; it must wrap there, never move to another column."""
+    import pandas as pd
+
+    from crf_annotation.layout import _Occupancy, _place_one
+
+    edges = [44.0, 216.0, 388.0]
+    question = (388.0, 383.0, 498.0, 394.0)
+    yes, no = (401.0, 369.0, 414.0, 380.0), (401.0, 356.0, 412.0, 367.0)
+    next_question = (389.0, 329.0, 532.0, 340.0)
+    taken = _Occupancy([question, yes, no, next_question])
+    row = pd.Series({"X0": 388.0, "X1": 498.0, "Y0": 383.0, "Y1": 394.0,
+                     "ATEXT": "EG.EGORRES where EGTESTCD = AFIB"})
+    rect = _place_one(row, taken, page_width=595.0, page_height=842.0, edges=edges)
+    assert rect is not None
+    assert rect[0] >= 388.0                       # in its own column
+    assert rect[1] >= 340.0 and rect[3] <= 394.0  # beside its own Yes/No, above the next question
+
+
+def test_no_room_in_the_column_means_unplaced_not_misplaced():
+    import pandas as pd
+
+    from crf_annotation.layout import _Occupancy, _place_one
+
+    # the whole right column is full; the left column is empty
+    full = _Occupancy([(388.0, y, 575.0, y + 10.0) for y in range(0, 842, 10)])
+    row = pd.Series({"X0": 388.0, "X1": 498.0, "Y0": 383.0, "Y1": 394.0, "ATEXT": "AE.AESEV"})
+    assert _place_one(row, full, page_width=595.0, page_height=842.0, edges=[44.0, 216.0, 388.0]) is None
