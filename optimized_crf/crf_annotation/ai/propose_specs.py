@@ -37,6 +37,8 @@ BATCH_FIELDS = 25
 PARALLEL_CALLS = 4
 
 _NAME = re.compile(r"^[A-Z][A-Z0-9]{1,7}$")
+# Test codes can be a single letter: potassium is K in CDISC Controlled Terminology.
+_TESTCD = re.compile(r"^[A-Z][A-Z0-9_]{0,7}$")
 _DOMAIN = re.compile(r"^[A-Z]{2}$")
 
 # form label → (domain, label, class)
@@ -395,18 +397,23 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
             if (oid, field_oid) not in field_labels:
                 continue
             kind = entry.get("kind")
-            answered.add(f"{oid}.{field_oid}")
             if kind == "skip":
+                answered.add(f"{oid}.{field_oid}")
                 continue
             variable = str(entry.get("variable") or "").upper()
             qnam = str(entry.get("qnam") or "").upper()
             testcd = str(entry.get("testcd") or "").upper()
             if kind == "supp":
                 if not _NAME.match(qnam):
+                    logger.warning("Ignored a proposal for %s.%s: QNAM %r is not a valid name", oid, field_oid, qnam)
                     continue
                 variable = "QVAL"
-            elif not _NAME.match(variable) or (kind == "finding" and not _NAME.match(testcd)):
+            elif not _NAME.match(variable) or (kind == "finding" and not _TESTCD.match(testcd)):
+                # left unanswered (not 'skipped'), so it is reported and can borrow a twin's mapping
+                logger.warning("Ignored a proposal for %s.%s: %r / testcd %r is not a valid SDTM name",
+                               oid, field_oid, variable, testcd)
                 continue
+            answered.add(f"{oid}.{field_oid}")
             proposal.mappings.append(ProposedMapping(
                 oid, field_oid, field_labels[(oid, field_oid)], domain, variable,
                 testcd=testcd if kind == "finding" else "", qnam=qnam if kind == "supp" else "",

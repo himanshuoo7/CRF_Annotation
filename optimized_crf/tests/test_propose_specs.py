@@ -95,7 +95,8 @@ def test_the_model_places_what_the_rules_cannot_and_bad_answers_are_dropped():
         ("COMMENT", "CO", "COVAL", "ai")
     ]
     assert "Comments" in client.asked[0]
-    assert proposal.counts == {"proposed": 1, "by_rule": 0, "by_ai": 1, "unmapped_fields": 0}
+    # the invalid answer for JUNK is reported as unmapped, not silently dropped
+    assert proposal.counts == {"proposed": 1, "by_rule": 0, "by_ai": 1, "unmapped_fields": 1}
 
 
 def test_proposals_become_ordinary_spec_files_the_catalog_reads(tmp_path):
@@ -248,3 +249,21 @@ def test_odm_sections_reach_the_model():
     client = FakeClient({"forms": []})
     propose(design, client)
     assert '"section": "Laboratory results"' in client.asked[0]
+
+
+def test_a_one_letter_test_code_is_valid():
+    """Potassium is K in CDISC Controlled Terminology; it was silently dropped."""
+    design = _design(("LB_FORM", "Laboratory results", [("K", "Serum potassium measurement value")]))
+    client = FakeClient({"forms": [{"form_oid": "LB_FORM", "domain": "LB", "domain_label": "Labs", "class": "FINDINGS",
+                                    "fields": [{"field_oid": "K", "domain": "", "kind": "finding", "variable": "LBORRES",
+                                                "testcd": "K", "qnam": "", "confidence": 0.95, "reason": "potassium"}]}]})
+    proposal = propose_mappings(design, client)
+    assert [(m.variable, m.testcd) for m in proposal.mappings] == [("LBORRES", "K")]
+
+
+def test_an_invalid_answer_is_reported_unmapped_not_silently_skipped():
+    design = _design(("LB_FORM", "Laboratory results", [("X", "Odd value")]))
+    client = FakeClient({"forms": [{"form_oid": "LB_FORM", "domain": "LB", "domain_label": "Labs", "class": "FINDINGS",
+                                    "fields": [{"field_oid": "X", "domain": "", "kind": "finding", "variable": "LB ORRES",
+                                                "testcd": "X", "qnam": "", "confidence": 0.5, "reason": "?"}]}]})
+    assert propose_mappings(design, client).unmapped == ["LB_FORM.X"]
