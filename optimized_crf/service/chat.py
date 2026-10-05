@@ -59,7 +59,9 @@ _SYSTEM = (
     "- remove: delete a row's annotation box (row = its id)\n"
     "- add: a new annotation beside a printed line (line = its id, annotation = the text)\n"
     "- move: put a row's box beside a different printed line (row and line)\n"
-    "Use -1 for row or line when an action does not need it. Only edit what the user asked for. If "
+    "Use -1 for row or line when an action does not need it. Each edit is checked before it is "
+    "applied and the result is reported separately, so describe edits as what you will do (\"I'll add "
+    "...\"), never as done. Only edit what the user asked for. If "
     "the request is ambiguous, or you need to see a page's lines and the user did not say which page, "
     "ask instead of editing."
 )
