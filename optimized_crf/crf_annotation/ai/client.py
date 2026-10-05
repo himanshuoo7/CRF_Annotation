@@ -68,6 +68,11 @@ class AiSettings:
     enabled: bool = True
     """AI assist is on by default. Set ACRF_AI=0, or matching.ai=False in the
     payload, to run with the deterministic tiers only."""
+    vertex_project: Optional[str] = None
+    """Set to call Claude through Google Vertex AI in this Google Cloud project
+    (Application Default Credentials, no Anthropic key) instead of the
+    Anthropic API. Same model IDs, same answers, so not part of the cache key."""
+    vertex_region: str = "global"
 
     @classmethod
     def from_env(cls, **overrides: Any) -> AiSettings:
@@ -77,6 +82,8 @@ class AiSettings:
             effort=os.getenv("ACRF_AI_EFFORT", "high"),
             cache_dir=Path(os.getenv("ACRF_AI_CACHE", "")) if os.getenv("ACRF_AI_CACHE") else None,
             enabled=os.getenv("ACRF_AI", "1").strip().lower() not in {"0", "false", "no", "off"},
+            vertex_project=os.getenv("ACRF_VERTEX_PROJECT") or os.getenv("ANTHROPIC_VERTEX_PROJECT_ID") or None,
+            vertex_region=os.getenv("ACRF_VERTEX_REGION") or os.getenv("CLOUD_ML_REGION") or "global",
         )
         for key, value in overrides.items():
             if value is not None:
@@ -159,10 +166,24 @@ class ClaudeClient:
                 "pip install -U anthropic"
             )
 
+        if self.settings.vertex_project:
+            try:
+                import google.auth  # noqa: F401 - AnthropicVertex needs it per request
+            except ImportError as exc:  # pragma: no cover - depends on install
+                raise AiUnavailable(
+                    "Claude on Vertex AI needs Google auth: pip install 'anthropic[vertex]'"
+                ) from exc
         try:
-            # Resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an
-            # `ant auth login` profile, in that order.
-            self._client = anthropic.Anthropic()
+            if self.settings.vertex_project:
+                # Application Default Credentials: the Cloud Run service
+                # account, or `gcloud auth application-default login` locally.
+                self._client = anthropic.AnthropicVertex(
+                    project_id=self.settings.vertex_project, region=self.settings.vertex_region
+                )
+            else:
+                # Resolves ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an
+                # `ant auth login` profile, in that order.
+                self._client = anthropic.Anthropic()
         except Exception as exc:  # noqa: BLE001 - surfaces as a clean message
             raise AiUnavailable(f"Could not create an Anthropic client: {exc}") from exc
         return self._client

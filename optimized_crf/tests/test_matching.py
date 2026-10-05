@@ -231,6 +231,31 @@ def test_an_outdated_sdk_is_reported_once_not_per_request(monkeypatch):
         client._ensure_client()
 
 
+def test_vertex_settings_pick_the_vertex_client(monkeypatch):
+    """On Cloud Run, Claude is reached through Vertex AI with the service's
+    own Google credentials, not an Anthropic key."""
+    import sys
+    import types
+    from crf_annotation.ai.client import AiSettings, ClaudeClient
+
+    made = {}
+    fake = types.ModuleType("anthropic")
+    fake.__version__ = "1.11.0"
+    fake.Anthropic = lambda *a, **k: pytest.fail("first-party client used on Vertex")
+    fake.AnthropicVertex = lambda **kwargs: made.update(kwargs) or object()
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+    monkeypatch.setitem(sys.modules, "google", types.ModuleType("google"))
+    monkeypatch.setitem(sys.modules, "google.auth", types.ModuleType("google.auth"))
+    monkeypatch.setenv("ACRF_VERTEX_PROJECT", "acrf-project")
+    monkeypatch.delenv("ACRF_VERTEX_REGION", raising=False)
+    monkeypatch.delenv("CLOUD_ML_REGION", raising=False)
+
+    settings = AiSettings.from_env()
+    assert ClaudeClient(settings).available() is True
+    assert made == {"project_id": "acrf-project", "region": "global"}
+    assert settings.fingerprint() == AiSettings(model=settings.model, effort=settings.effort).fingerprint()
+
+
 @pytest.mark.parametrize("model,thinking,effort", [
     ("claude-opus-5", True, True),
     ("claude-sonnet-5", True, True),
