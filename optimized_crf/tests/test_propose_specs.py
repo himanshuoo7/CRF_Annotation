@@ -178,4 +178,5 @@ def test_an_identifier_on_any_form_is_written_to_the_dm_spec():
     documents = to_spec_documents(propose_mappings(design, client=None))
     assert documents["CM_FORM__DM"]["variables"][0]["variable"] == "SUBJID"
     assert documents["CM_FORM__DM"]["domain"]["functions"] == [{"source_dataset": "CM_FORM"}]
+    assert documents["CM_FORM__DM"]["domain"]["label"] == "Demographics"
     assert documents["CM_FORM__CM"]["variables"][0]["variable"] == "CMTRT"

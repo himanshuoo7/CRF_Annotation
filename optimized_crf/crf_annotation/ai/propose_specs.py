@@ -368,10 +368,11 @@ def to_spec_documents(proposal: Proposal) -> dict[str, dict[str, Any]]:
     """The proposal as spec JSON documents, one per (source form, target domain)."""
     documents: dict[str, dict[str, Any]] = {}
     for mapping in proposal.mappings:
-        domain, label, klass = proposal.domains.get(mapping.form_oid, (mapping.domain, mapping.domain, ""))
+        domain, label, klass = proposal.domains.get(mapping.form_oid, (mapping.domain, "", ""))
         if mapping.domain and mapping.domain != domain:
             # collected here, submitted elsewhere (the subject number, into DM)
-            domain, label, klass = mapping.domain, _DOMAIN_LABELS.get(mapping.domain, mapping.domain), ""
+            domain, label, klass = mapping.domain, "", ""
+        label = label or _DOMAIN_LABELS.get(domain, domain)
         if mapping.qnam:
             name = f"SUPP{domain}"
             doc = documents.setdefault(f"{mapping.form_oid}__{name}", {
