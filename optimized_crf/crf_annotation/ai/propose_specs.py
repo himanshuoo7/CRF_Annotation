@@ -156,9 +156,6 @@ def _form_domain(label: str) -> Optional[tuple[str, str, str]]:
 
 def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass: str) -> Any:
     """A deterministic proposal for one field, `_SKIP` (not submitted), or None."""
-    identifier = _match(_IDENTIFIERS, label.strip())
-    if identifier:
-        return ProposedMapping(form_oid, field_oid, label, "DM", identifier, reason="subject/site identifier")
     if domain in _SCREENED_DOMAINS and _SCREENING_QUESTION.search(label.strip()):
         if domain == "AE" and re.search(r"(?<!non-)(?<!non )\bserious\b", label, re.IGNORECASE):
             return ProposedMapping(form_oid, field_oid, label, domain, "AESER", reason="SAE screening question")
@@ -302,6 +299,12 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
             proposal.domains[form.oid] = found
     for item in design.fields:
         domain = proposal.domains.get(item.form_oid)
+        # The subject and site numbers go to DM whatever the form is called.
+        identifier = _match(_IDENTIFIERS, item.label.strip())
+        if identifier:
+            proposal.mappings.append(ProposedMapping(item.form_oid, item.oid, item.label, "DM", identifier,
+                                                     reason="subject/site identifier"))
+            continue
         mapping = _rule_mapping(item.form_oid, item.oid, item.label, domain[0], domain[2]) if domain else None
         if mapping is _SKIP:
             continue  # collected, not submitted: annotated NOT SUBMITTED downstream

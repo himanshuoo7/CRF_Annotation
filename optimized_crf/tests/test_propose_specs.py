@@ -137,6 +137,7 @@ def test_rules_from_a_real_study_place_each_field_correctly():
             ("SUBJ", "Subject Identifier"), ("ANYCM", "Were any concomitant medications taken by the subject?"),
             ("DRUG", "Drug Name"), ("WHY", "Reason for medication"), ("ONG", "Ongoing medication?")]),
         ("DM_FORM", "Demography", [("SITE", "Center Number")]),
+        ("IP_FORM", "Investigational Product", [("SUBJ2", "Subject Identifier")]),  # no domain rule
         ("AE_FORM", "Non-serious adverse events", [
             ("ANYAE", "Did the subject experience any non-serious adverse events during the study?"),
             ("ACN", "Action Taken with Investigational Product(s) as a Result of the Non-Serious AE")]),
@@ -148,6 +149,7 @@ def test_rules_from_a_real_study_place_each_field_correctly():
     placed = {m.field_oid: f"{m.domain}.{m.variable}" for m in proposal.mappings}
 
     assert placed["SUBJ"] == "DM.SUBJID" and placed["SITE"] == "DM.SITEID"
+    assert placed["SUBJ2"] == "DM.SUBJID"
     assert placed["DRUG"] == "CM.CMTRT"
     assert placed["WHY"] == "CM.CMINDC" and placed["ONG"] == "CM.CMENRTPT"
     assert placed["ACN"] == "AE.AEACN"
