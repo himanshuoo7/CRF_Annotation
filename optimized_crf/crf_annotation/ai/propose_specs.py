@@ -56,7 +56,15 @@ _FORM_RULES: Sequence[tuple[str, str, str, str]] = (
     (r"subject characteristic", "SC", "Subject Characteristics", "FINDINGS"),
 )
 
-_DOMAIN_LABELS = {domain: label for _, domain, label, _ in _FORM_RULES}
+_DOMAIN_LABELS = {
+    # the standard SDTMIG names, for domains no form rule produces
+    "CO": "Comments", "SV": "Subject Visits", "SE": "Subject Elements", "EC": "Exposure as Collected",
+    "PR": "Procedures", "QS": "Questionnaires", "FA": "Findings About", "TU": "Tumor Identification",
+    "TR": "Tumor Results", "RS": "Disease Response", "DD": "Death Details", "MB": "Microbiology Specimen",
+    "PC": "Pharmacokinetics Concentrations", "RP": "Reproductive System Findings", "CE": "Clinical Events",
+    "HO": "Healthcare Encounters", "DV": "Protocol Deviations", "ML": "Meal Data", "IS": "Immunogenicity",
+    **{domain: label for _, domain, label, _ in _FORM_RULES},
+}
 
 # field label → variable suffix (prefixed with the domain) or a full name
 _FIELD_RULES: dict[str, Sequence[tuple[str, str]]] = {
@@ -176,6 +184,24 @@ def _rule_mapping(form_oid: str, field_oid: str, label: str, domain: str, klass:
     return None
 
 
+# Variable-name endings that SDTM prefixes with the domain code (--ORRES etc.).
+_PREFIXED_SUFFIXES = frozenset({
+    "ORRES", "ORRESU", "ORNRLO", "ORNRHI", "STRESC", "STRESN", "STRESU", "TESTCD", "TEST", "CAT", "SCAT",
+    "DTC", "STDTC", "ENDTC", "DY", "TPT", "ELTM", "DUR", "TERM", "DECOD", "MODIFY", "BODSYS", "TRT",
+    "DOSE", "DOSU", "DOSFRQ", "DOSFRM", "DOSTXT", "ROUTE", "INDC", "LOC", "LAT", "DIR", "POS", "METHOD",
+    "STAT", "REASND", "NRIND", "CLSIG", "EVAL", "SPEC", "SEV", "SER", "REL", "ACN", "ACNOTH", "OUT",
+    "PRESP", "OCCUR", "ENRF", "STRF", "ENRTPT", "STRTPT", "ENTPT", "STTPT", "PATT", "CONTRT", "TOX",
+    "TOXGR", "LLT", "HLT", "HLGT", "SOC", "PTCD", "LNKID", "GRPID", "REFID", "SPID", "LOBXFL", "BLFL",
+})
+
+
+def _domain_of_variable(variable: str) -> str:
+    """`IEORRES` -> `IE`; '' when the name is not domain-prefixed (SEX, QVAL)."""
+    if len(variable) > 2 and variable[2:] in _PREFIXED_SUFFIXES and _DOMAIN.match(variable[:2]):
+        return variable[:2]
+    return ""
+
+
 def _make_consistent(mappings: list[ProposedMapping]) -> int:
     """The same question on two forms gets the same annotation.
 
@@ -205,7 +231,10 @@ _SYSTEM = (
     "You map clinical-trial EDC fields to CDISC SDTM (SDTMIG 3.4) for an annotated CRF that a "
     "regulator will read. For each field, give the SDTM domain and variable it is collected into. "
     "Forms come from many sponsors and EDC systems, so judge each field by what it collects, not by "
-    "the exact wording.\n\n"
+    "the exact wording. A single form can hold sections that belong to different domains (a "
+    "screening form with medical history, labs, physical exam and eligibility criteria); each "
+    "field's section is given when the EDC export has one, and its domain follows what it "
+    "collects, not the form.\n\n"
     "Conventions to follow:\n"
     "- Findings: a test result, measurement, or a yes/no 'is this abnormality present' question on a "
     "findings form (ECG, labs, vital signs, physical exam, questionnaires, eligibility criteria) is "
@@ -213,6 +242,10 @@ _SYSTEM = (
     "Each ECG finding, including every type of myocardial infarction, is a finding of its own, "
     "never 'skip'. Use the CDISC Controlled Terminology test code when one exists; otherwise make a "
     "clear code of at most 8 characters. Give the same question the same code on every form.\n"
+    "- Questions about a test result belong to that test's record, in its domain, with the same "
+    "testcd as the result (kind 'finding'): whether it is within the normal range is --NRIND, "
+    "whether it is clinically significant is --CLSIG, its unit is --ORRESU, 'not done' is "
+    "--STAT. These are standard variables, not supplemental qualifiers.\n"
     "- Eligibility: each inclusion or exclusion criterion question is IE, IEORRES, with the "
     "criterion identifier as testcd (INCL01, EXCL03, ...). Every criterion on the form is mapped, "
     "not only some.\n"
@@ -299,7 +332,7 @@ def _ask_model(client: Any, forms: list[dict[str, Any]]) -> list[dict[str, Any]]
             "Propose SDTM mappings for these EDC forms and fields (labels as printed on the CRF):\n"
             + json.dumps(batch, indent=1)
         )
-        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/3")
+        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/5")
         return list((answer or {}).get("forms") or [])
 
     with ThreadPoolExecutor(max_workers=PARALLEL_CALLS) as pool:
@@ -330,7 +363,10 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
         if mapping:
             proposal.mappings.append(mapping)
         else:
-            pending.setdefault(item.form_oid, []).append({"field_oid": item.oid, "label": item.label})
+            entry = {"field_oid": item.oid, "label": item.label}
+            if item.section:
+                entry["section"] = item.section
+            pending.setdefault(item.form_oid, []).append(entry)
 
     request = [
         {"form_oid": oid, "form_label": labels.get(oid, oid),
@@ -350,6 +386,11 @@ def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:
             # a field may be submitted in another domain (randomisation date -> DS)
             own = str(entry.get("domain") or "").upper()
             domain = own if _DOMAIN.match(own) else form_domain
+            # SDTM names carry their domain (IEORRES is IE): a variable never
+            # goes into another domain because of the form it sits on.
+            named = _domain_of_variable(str(entry.get("variable") or "").upper())
+            if named and entry.get("kind") in ("variable", "finding"):
+                domain = named
             field_oid = str(entry.get("field_oid") or "")
             if (oid, field_oid) not in field_labels:
                 continue

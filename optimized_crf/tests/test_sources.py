@@ -123,3 +123,31 @@ def test_profile_does_not_claim_a_foreign_file(tmp_path):
 def test_profile_requires_forms_and_fields_sections():
     with pytest.raises(DesignError):
         Profile.from_dict({"name": "broken", "format": "json", "forms": {}})
+
+
+def test_odm_keeps_each_fields_section(odm_study):
+    """One form can hold sections for several domains; the section travels with the field."""
+    design = load_study_design([odm_study["odm"]])
+    sections = {field.oid: field.section for field in design.fields}
+    assert sections["SEX"] == "DM" and sections["AETERM"] == "AE"
+
+
+def test_odm_items_sharing_a_name_stay_separate_fields(tmp_path):
+    """A value, its normal-range flag and its clinical significance, all Named
+    'Creatinine': three fields, not one."""
+    odm = tmp_path / "shared_names.xml"
+    odm.write_text("""<?xml version="1.0" encoding="UTF-8"?>
+<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3" ODMVersion="1.3.2">
+  <Study OID="S.1"><MetaDataVersion OID="MDV.1" Name="v1">
+    <FormDef OID="F.1" Name="Screening"><ItemGroupRef ItemGroupOID="IG.1" Mandatory="Yes"/></FormDef>
+    <ItemGroupDef OID="IG.1" Name="Laboratory results">
+      <ItemRef ItemOID="I.76" Mandatory="No"/><ItemRef ItemOID="I.77" Mandatory="No"/>
+      <ItemRef ItemOID="I.9" Mandatory="No"/>
+    </ItemGroupDef>
+    <ItemDef OID="I.76" Name="Creatinine" DataType="integer"><Question><TranslatedText xml:lang="en">Creatinine value</TranslatedText></Question></ItemDef>
+    <ItemDef OID="I.77" Name="Creatinine" DataType="boolean"><Question><TranslatedText xml:lang="en">Creatinine within normal range?</TranslatedText></Question></ItemDef>
+    <ItemDef OID="I.9" Name="Urea" DataType="integer"><Question><TranslatedText xml:lang="en">Urea value</TranslatedText></Question></ItemDef>
+  </MetaDataVersion></Study>
+</ODM>""")
+    design = load_study_design([odm])
+    assert sorted(f.oid for f in design.fields) == ["I.76", "I.77", "Urea"]

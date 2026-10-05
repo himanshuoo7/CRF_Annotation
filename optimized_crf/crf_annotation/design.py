@@ -52,6 +52,9 @@ class Field:
     codelist_oid: str = ""
     source_oid: str = ""
     """The vendor's own key, when it differs from `oid`. Traceability only."""
+    section: str = ""
+    """The section of the form it sits in (an ODM ItemGroup), when the EDC
+    export says. One form can hold sections for several SDTM domains."""
 
 
 @dataclass(frozen=True)

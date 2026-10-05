@@ -219,3 +219,32 @@ def test_a_field_the_model_skipped_reuses_the_same_question_on_another_form():
     proposal = propose_mappings(design, client)
     assert {(m.field_oid, m.testcd) for m in proposal.mappings} == {("LAD1", "LAD"), ("LAD2", "LAD")}
     assert proposal.unmapped == []
+
+
+def test_one_form_with_many_sections_maps_each_field_to_its_own_domain():
+    """A screening form holding history, labs and eligibility: the variable's
+    name decides the domain, never the form's."""
+    design = _design(("SCR", "Visit 1", [("HB", "Haemoglobin"), ("INC1", "Age 18 or over?"), ("SURG", "Prior surgery")]))
+    client = FakeClient({"forms": [{"form_oid": "SCR", "domain": "MH", "domain_label": "Medical History", "class": "EVENTS",
+                                    "fields": [
+        {"field_oid": "HB", "domain": "", "kind": "finding", "variable": "LBORRES", "testcd": "HGB", "qnam": "",
+         "confidence": 0.9, "reason": "lab"},
+        {"field_oid": "INC1", "domain": "", "kind": "finding", "variable": "IEORRES", "testcd": "INCL01", "qnam": "",
+         "confidence": 0.9, "reason": "criterion"},
+        {"field_oid": "SURG", "domain": "", "kind": "variable", "variable": "MHTERM", "testcd": "", "qnam": "",
+         "confidence": 0.9, "reason": "history"}]}]})
+    proposal = propose_mappings(design, client)
+    assert {(m.field_oid, m.domain) for m in proposal.mappings} == {("HB", "LB"), ("INC1", "IE"), ("SURG", "MH")}
+    documents = to_spec_documents(proposal)
+    assert {"SCR__LB", "SCR__IE", "SCR__MH"} <= set(documents)
+
+
+def test_odm_sections_reach_the_model():
+    from crf_annotation.ai.propose_specs import propose_mappings as propose
+    from crf_annotation.design import Field, Form, StudyDesign
+
+    design = StudyDesign(source_system="test", forms=(Form(oid="SCR", label="Visit 1"),),
+                         fields=(Field(oid="HB", form_oid="SCR", label="Haemoglobin", section="Laboratory results"),))
+    client = FakeClient({"forms": []})
+    propose(design, client)
+    assert '"section": "Laboratory results"' in client.asked[0]

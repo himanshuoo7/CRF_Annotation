@@ -30,7 +30,7 @@ from .constants import (
     NOT_SUBMITTED_TEXT,
 )
 from .logging_utils import get_logger
-from .layout import TWO_LINE_HEIGHT, two_lines
+from .layout import THREE_LINE_HEIGHT, TWO_LINE_HEIGHT, three_lines, two_lines
 from .specs import domain_of
 
 logger = get_logger()
@@ -187,9 +187,11 @@ class CrfRenderer:
         font_size = HEADER_FONT_SIZE if is_header else FIELD_FONT_SIZE
         x0, top, x1, bottom = rect
         # Layout gives a long annotation two lines in a narrow, tall box.
-        if not is_header and bottom - top >= TWO_LINE_HEIGHT - 0.5 and "\n" not in text:
-            lines = two_lines(text)
-            text = "\n".join(lines)
+        if not is_header and "\n" not in text:
+            if bottom - top >= THREE_LINE_HEIGHT - 0.5:
+                text = "\n".join(three_lines(text))
+            elif bottom - top >= TWO_LINE_HEIGHT - 0.5:
+                text = "\n".join(two_lines(text))
         # Centre the text band inside the reserved rectangle.
         text_height = font_size * 1.35 * (text.count("\n") + 1)
         offset = max(0.0, (bottom - top - text_height) / 2)

@@ -69,6 +69,21 @@ def column_of(x0: float, edges: list[float], right_limit: float) -> tuple[float,
 
 
 TWO_LINE_HEIGHT = FIELD_ROW_HEIGHT * 1.8
+THREE_LINE_HEIGHT = FIELD_ROW_HEIGHT * 2.55
+
+
+def three_lines(text: str) -> list[str]:
+    """`LB.LBORRES` / `where LBTESTCD` / `= AST`: the narrowest box, for a
+    question whose only free space before the next one is short."""
+    head, *rest = two_lines(text)
+    if not rest:
+        return [head]
+    tail = rest[0]
+    if " = " in tail:
+        left, right = tail.rsplit(" = ", 1)
+        return [head, left, f"= {right}"]
+    second = two_lines(tail)
+    return [head, *second] if len(second) == 2 else [head, tail]
 
 
 def two_lines(text: str) -> list[str]:
@@ -161,21 +176,28 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
         # Every piece of printed text on the page is an obstacle, plus the band
         # reserved at the top for domain headers.
         page_items = result[result["PAGE_NO"] == page_no]
-        occupancy = _Occupancy(_item_rects(page_items))
+        header_band = (0.0, height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, width, height)
+        occupancy = _Occupancy([*_item_rects(page_items), header_band])
+        # Entry-box glyphs, underscores and other wordless marks: a box may sit
+        # over them when that is the only way to stay beside its own question.
+        wordy = page_items[page_items["ITM_TEXT"].map(_has_words)] if "ITM_TEXT" in page_items.columns else page_items
+        soft = _Occupancy([*_item_rects(wordy), header_band])
         # Columns from where the page's *questions* start: date masks and
         # answer options start at odd places and would fake extra columns.
         labels = page_items[page_items["VAR_OID"].notna()] if "VAR_OID" in page_items.columns else page_items
         edges = column_edges(labels, min_lines=2) if len(labels) >= 4 else column_edges(page_items)
-        occupancy.add((0.0, height - HEADER_TOP_MARGIN - 3 * FIELD_ROW_HEIGHT, width, height))
+        right_limit = width - _MIN_LEFT
 
         # Top-to-bottom, left-to-right: stable output and better packing.
         ordered = page_rows.sort_values(["Y0", "X0"], ascending=[False, True], kind="stable")
         for index, row in ordered.iterrows():
-            rect = _place_one(row, occupancy, width, height, edges)
+            floor = _next_question_top(row, labels, edges, right_limit)
+            rect = _place_one(row, occupancy, width, height, edges, floor=floor, soft=soft)
             if rect is None:
                 dropped += 1
                 continue
             occupancy.add(rect)
+            soft.add(rect)
             positions[index] = format_pos(*rect)
             placed += 1
 
@@ -190,13 +212,36 @@ def place_annotations(merged: pd.DataFrame, geometry: PageGeometry) -> tuple[pd.
     return result, PlacementStats(placed=placed, dropped=dropped)
 
 
+def _has_words(text: object) -> bool:
+    return any(ch.isalnum() for ch in str(text or ""))
+
+
+def _next_question_top(row: pd.Series, labels: pd.DataFrame, edges: list[float], right_limit: float) -> float | None:
+    """Top edge of the next question below this field in its column.
+
+    A box below that line sits beside the next question and reads as its
+    annotation, so the search near a field stops there.
+    """
+    try:
+        x0, y0 = float(row["X0"]), float(row["Y0"])
+    except (TypeError, ValueError):
+        return None
+    if labels.empty or "VAR_OID" not in labels.columns:
+        return None
+    column = column_of(x0, edges, right_limit)
+    others = labels[(labels["VAR_OID"] != row.get("VAR_OID")) & (pd.to_numeric(labels["Y1"], errors="coerce") < y0)]
+    below = [float(r["Y1"]) for _, r in others.iterrows() if column_of(float(r["X0"]), edges, right_limit) == column]
+    return max(below) if below else None
+
+
 def _item_rects(rows: pd.DataFrame) -> list[Rect]:
     frame = rows[["X0", "Y0", "X1", "Y1"]].apply(pd.to_numeric, errors="coerce").dropna()
     return [tuple(values) for values in frame.drop_duplicates().to_numpy()]
 
 
 def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float,
-               edges: list[float] | None = None) -> Rect | None:
+               edges: list[float] | None = None, floor: float | None = None,
+               soft: _Occupancy | None = None) -> Rect | None:
     """A free slot in the field's own column: beside it, then the rows below
     it, on one line or wrapped onto two, then further down the column, then
     above it. Never in another column: a box there reads as the neighbouring
@@ -217,16 +262,19 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     lines = two_lines(text)
     if len(lines) == 2:
         shapes.append((max(annotation_width(line) for line in lines), max(TWO_LINE_HEIGHT, y1 - y0)))
+    lines = three_lines(text)
+    if len(lines) == 3:
+        shapes.append((max(annotation_width(line) for line in lines), max(THREE_LINE_HEIGHT, y1 - y0)))
     fitting = [shape for shape in shapes if shape[0] <= col_right - col_left]
     if not fitting:
         # wider than its column even wrapped: let the narrowest run on rightwards
         fitting, col_right = [min(shapes)], right_limit
 
-    def scan(top: float, start: float, width: float, height: float) -> Rect | None:
+    def scan(top: float, start: float, width: float, height: float, where: _Occupancy = occupancy) -> Rect | None:
         left = start
         while left + width <= col_right:
             candidate = (left, top, left + width, top + height)
-            blocker = occupancy.blocker(candidate)
+            blocker = where.blocker(candidate)
             if blocker is None:
                 return candidate
             # step just past what is in the way: a narrow column has room
@@ -238,7 +286,21 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     # 1. beside the field, then just under it - in small steps, so the gap
     # beside a question's own Yes/No rows is found before the next question's
     # (both shapes at each height: the nearest slot wins, one line preferred)
-    for top in _steps(y0, max(0.0, y0 - near), -_FINE_STEP):
+    # Never below the next question's label: first around printed words
+    # only, then over wordless marks (entry boxes) if that is what it takes.
+    lowest = max(0.0, y0 - near)
+    for where in (occupancy, soft) if soft is not None else (occupancy,):
+        for top in _steps(y0, lowest, -_FINE_STEP):
+            for width, height in fitting:
+                if floor is not None and top < floor + 1.0:
+                    continue
+                start = x1 + FIELD_GAP_X if top == y0 else max(col_left, min(x0, col_right - width))
+                found = scan(top, start, width, height, where)
+                if found:
+                    return found
+        if floor is None:
+            break
+    for top in _steps(y0, lowest, -_FINE_STEP):  # no room above the next question
         for width, height in fitting:
             start = x1 + FIELD_GAP_X if top == y0 else max(col_left, min(x0, col_right - width))
             found = scan(top, start, width, height)

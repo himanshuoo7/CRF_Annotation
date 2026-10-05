@@ -18,6 +18,8 @@ vendor extension namespaces all parse the same way.
 
 from __future__ import annotations
 
+from collections import Counter
+
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterator, Optional
@@ -161,6 +163,18 @@ class OdmXmlSource:
 
         for form_oid, form in form_defs.items():
             position = 0
+            # Specs usually reference a field by its short Name, but some
+            # exports give several items one Name ("Serologic tests
+            # Creatinine" for the value, its normal-range flag and its
+            # clinical significance). A shared Name would merge them into
+            # one field, so those items keep their unique OID instead.
+            names = Counter(
+                (item_defs[ref.get("ItemOID", "")].get("Name") or ref.get("ItemOID", "")).strip()
+                for group_ref in _children(form, "ItemGroupRef")
+                if (group := group_defs.get(group_ref.get("ItemGroupOID", ""))) is not None
+                for ref in _children(group, "ItemRef")
+                if ref.get("ItemOID", "") in item_defs
+            )
             for group_ref in _children(form, "ItemGroupRef"):
                 group_oid = group_ref.get("ItemGroupOID", "")
                 group = group_defs.get(group_oid)
@@ -182,17 +196,21 @@ class OdmXmlSource:
                         unlabelled += 1
 
                     codelist = _child(item, "CodeListRef")
-                    # Specs reference the field by its short name, not its OID.
-                    name = item.get("Name") or item_oid
+                    # Specs reference the field by its short name, not its OID,
+                    # unless that name is shared with another item on the form.
+                    name = (item.get("Name") or item_oid).strip()
+                    if names[name] > 1:
+                        name = item_oid
                     fields.append(
                         Field(
-                            oid=name.strip(),
+                            oid=name,
                             form_oid=form_oid,
                             label=label.strip(),
                             order=position,
                             datatype=item.get("DataType", ""),
                             codelist_oid=codelist.get("CodeListOID", "") if codelist is not None else "",
                             source_oid=item_oid,
+                            section=(group.get("Name") or "").strip(),
                         )
                     )
                     position += 1

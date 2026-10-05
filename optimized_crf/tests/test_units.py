@@ -378,3 +378,25 @@ def test_no_room_in_the_column_means_unplaced_not_misplaced():
     full = _Occupancy([(388.0, y, 575.0, y + 10.0) for y in range(0, 842, 10)])
     row = pd.Series({"X0": 388.0, "X1": 498.0, "Y0": 383.0, "Y1": 394.0, "ATEXT": "AE.AESEV"})
     assert _place_one(row, full, page_width=595.0, page_height=842.0, edges=[44.0, 216.0, 388.0]) is None
+
+
+def test_a_box_does_not_drift_past_the_next_question():
+    """'GOT value' has entry boxes and a unit under it; its box must stay above
+    the next question ('Is GOT within normal range?'), narrowing to three lines
+    if that is what fits."""
+    import pandas as pd
+
+    from crf_annotation.layout import THREE_LINE_HEIGHT, _Occupancy, _place_one
+
+    label = (45.0, 696.5, 140.0, 707.4)
+    unit = (147.0, 680.0, 160.0, 690.9)
+    next_question = (45.0, 645.0, 190.0, 655.9)
+    yes = (57.5, 630.9, 70.0, 641.8)
+    taken = _Occupancy([label, unit, next_question, yes])
+    row = pd.Series({"X0": 45.0, "X1": 140.0, "Y0": 696.5, "Y1": 707.4,
+                     "ATEXT": "LB.LBORRES where LBTESTCD = AST"})
+    rect = _place_one(row, taken, page_width=595.0, page_height=842.0, edges=[40.0, 210.0, 376.0],
+                      floor=655.9, soft=taken)
+    assert rect is not None
+    assert rect[1] >= 655.9                                   # above the next question
+    assert rect[3] - rect[1] >= THREE_LINE_HEIGHT - 0.5       # narrowed to three lines
