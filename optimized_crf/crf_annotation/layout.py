@@ -126,8 +126,10 @@ def _item_rects(rows: pd.DataFrame) -> list[Rect]:
 
 
 def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_height: float) -> Rect | None:
-    """First free slot: to the right of the field, then successive rows below."""
+    """First free slot: to the right of the field, then rows below it in the
+    field's own column, and only then rows below from the left margin."""
     try:
+        x0 = float(row["X0"])
         x1 = float(row["X1"])
         y0 = float(row["Y0"])
         y1 = float(row["Y1"])
@@ -138,14 +140,18 @@ def _place_one(row: pd.Series, occupancy: _Occupancy, page_width: float, page_he
     box_height = max(FIELD_ROW_HEIGHT, y1 - y0)
     right_limit = page_width - _MIN_LEFT
 
-    for drop in range(_MAX_DROPS):
-        top = y0 - drop * (box_height + 2.0)
-        if top < 0:
-            break
-        left = x1 + FIELD_GAP_X if drop == 0 else _MIN_LEFT
-        while left + box_width <= right_limit:
-            candidate = (left, top, left + box_width, top + box_height)
-            if not occupancy.collides(candidate):
-                return candidate
-            left += box_width / 2 + FIELD_GAP_X
+    # A question in the right-hand column has no room beside it; its box must
+    # still land in that column, under it, not across the page beside another
+    # field where a reviewer would read it as that field's annotation.
+    for column_start in (max(x0, _MIN_LEFT), _MIN_LEFT):
+        for drop in range(_MAX_DROPS):
+            top = y0 - drop * (box_height + 2.0)
+            if top < 0:
+                break
+            left = x1 + FIELD_GAP_X if drop == 0 else column_start
+            while left + box_width <= right_limit:
+                candidate = (left, top, left + box_width, top + box_height)
+                if not occupancy.collides(candidate):
+                    return candidate
+                left += box_width / 2 + FIELD_GAP_X
     return None
