@@ -256,6 +256,41 @@ def test_vertex_settings_pick_the_vertex_client(monkeypatch):
     assert settings.fingerprint() == AiSettings(model=settings.model, effort=settings.effort).fingerprint()
 
 
+def test_a_gemini_model_gets_a_gemini_request_and_the_same_contract(tmp_path):
+    """While testing, a cheap Gemini model stands in for Claude: same JSON
+    contract, same cache, nothing sent to the Anthropic SDK."""
+    from types import SimpleNamespace
+
+    from crf_annotation.ai.client import AiSettings, ClaudeClient
+
+    captured = {}
+
+    class FakeModels:
+        def generate_content(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                text='{"answer": "DM.SEX"}', prompt_feedback=None,
+                usage_metadata=SimpleNamespace(prompt_token_count=10, candidates_token_count=4, thoughts_token_count=6),
+            )
+
+    client = ClaudeClient(AiSettings(model="gemini-3.8-flash", effort="xhigh", cache_dir=tmp_path))
+    client._client = SimpleNamespace(models=FakeModels())
+    system = [{"type": "text", "text": "rules", "cache_control": {"type": "ephemeral"}}]
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}}}
+
+    assert client.json_call(system=system, user="Sex", schema=schema) == {"answer": "DM.SEX"}
+    config = captured["config"]
+    assert captured["model"] == "gemini-3.8-flash" and captured["contents"] == "Sex"
+    assert config.system_instruction == "rules"
+    assert config.response_mime_type == "application/json" and config.response_json_schema == schema
+    assert config.thinking_config.thinking_level.value.lower() == "high"  # xhigh has no Gemini level
+    assert (client.input_tokens, client.output_tokens) == (10, 10)
+
+    captured.clear()
+    assert client.json_call(system=system, user="Sex", schema=schema) == {"answer": "DM.SEX"}
+    assert captured == {} and client.cache_hits == 1
+
+
 @pytest.mark.parametrize("model,thinking,effort", [
     ("claude-opus-5", True, True),
     ("claude-sonnet-5", True, True),

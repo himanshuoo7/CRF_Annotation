@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from ..logging_utils import get_logger
+from . import gemini
 
 logger = get_logger()
 
@@ -132,7 +133,8 @@ class ResponseCache:
 
 
 class ClaudeClient:
-    """Structured-output JSON calls against the Messages API."""
+    """Structured-output JSON calls against the Messages API — or against
+    Gemini when the configured model is a Gemini model (see `gemini.py`)."""
 
     def __init__(self, settings: Optional[AiSettings] = None) -> None:
         self.settings = settings or AiSettings()
@@ -146,6 +148,14 @@ class ClaudeClient:
     # -- lifecycle ----------------------------------------------------------
     def _ensure_client(self) -> Any:
         if self._client is not None:
+            return self._client
+        if gemini.is_gemini(self.settings.model):
+            try:
+                self._client = gemini.make_client(self.settings.vertex_project, self.settings.vertex_region)
+            except ImportError as exc:  # pragma: no cover - depends on install
+                raise AiUnavailable("Gemini needs the Google Gen AI SDK: pip install google-genai") from exc
+            except Exception as exc:  # noqa: BLE001 - surfaces as a clean message
+                raise AiUnavailable(f"Could not create a Gemini client: {exc}") from exc
             return self._client
         try:
             import anthropic
@@ -217,6 +227,8 @@ class ClaudeClient:
         client = self._ensure_client()
 
         model = self.settings.model
+        if gemini.is_gemini(model):
+            return self._gemini_call(client, key, system=system, user=user, schema=schema)
         # Structured output works on every model; thinking and effort do not.
         output_config: dict[str, Any] = {
             "format": {"type": "json_schema", "schema": dict(schema)}
@@ -264,9 +276,45 @@ class ClaudeClient:
         self.cache.put(key, parsed)
         return parsed
 
+    def _gemini_call(
+        self,
+        client: Any,
+        key: str,
+        *,
+        system: Sequence[Mapping[str, Any]] | str,
+        user: str,
+        schema: Mapping[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        try:
+            reply = gemini.request(
+                client, model=self.settings.model, max_tokens=self.settings.max_tokens,
+                effort=self.settings.effort, system=system, user=user, schema=schema,
+            )
+        except Exception as exc:  # noqa: BLE001 - never fail a run over AI assist
+            logger.error("Gemini request failed: %s", exc)
+            return None
+
+        self.calls += 1
+        self.input_tokens += reply.input_tokens
+        self.output_tokens += reply.output_tokens
+        if reply.blocked:
+            logger.error("Gemini declined the request (%s)", reply.blocked)
+            return None
+        if not reply.text:
+            logger.error("Gemini returned no text content")
+            return None
+        try:
+            parsed = json.loads(reply.text)
+        except json.JSONDecodeError as exc:
+            logger.error("Gemini returned unparseable JSON: %s", exc)
+            return None
+
+        self.cache.put(key, parsed)
+        return parsed
+
     # -- reporting ----------------------------------------------------------
     def usage_summary(self) -> str:
         return (
-            f"{self.calls} Claude call(s), {self.cache_hits} cache hit(s), "
+            f"{self.calls} {'Gemini' if gemini.is_gemini(self.settings.model) else 'Claude'} call(s), {self.cache_hits} cache hit(s), "
             f"{self.input_tokens} input / {self.output_tokens} output tokens"
         )
