@@ -14,10 +14,12 @@ from dataclasses import dataclass
 from typing import Iterable
 
 import pandas as pd
+import pymupdf
 
 from .constants import (
     EMPTY_POS,
     FIELD_CHAR_WIDTH,
+    FIELD_FONT_SIZE,
     FIELD_GAP_X,
     FIELD_ROW_HEIGHT,
     HEADER_TOP_MARGIN,
@@ -32,7 +34,7 @@ Rect = tuple[float, float, float, float]
 _BAND = 24.0          # vertical bucket size for the collision index
 _MAX_DROPS = 6        # how many rows down we try before giving up
 _MIN_LEFT = 20.0      # never place an annotation in the binding margin
-_TEXT_PADDING = 6.0
+_TEXT_PADDING = 8.0   # the box border and its inner margin
 _COLUMN_GAP = 80.0    # text starts closer than this are indents, not columns
 _COLUMN_LINES = 3     # lines that must start at an x for it to count as a column
 
@@ -81,7 +83,17 @@ def two_lines(text: str) -> list[str]:
 
 
 def annotation_width(text: str) -> float:
-    return len(str(text)) * FIELD_CHAR_WIDTH + _TEXT_PADDING
+    """Box width for an annotation, measured in the font it is drawn in.
+
+    A per-character estimate overshoots by 10-20%, which is the difference
+    between a box fitting beside a short "Yes"/"No" in a narrow column and
+    being pushed to the foot of the column, away from its question.
+    """
+    try:
+        measured = pymupdf.get_text_length(str(text), fontname="helv", fontsize=FIELD_FONT_SIZE)
+    except Exception:  # noqa: BLE001 - fall back to the estimate
+        measured = len(str(text)) * FIELD_CHAR_WIDTH
+    return measured + _TEXT_PADDING
 
 
 class _Occupancy:
