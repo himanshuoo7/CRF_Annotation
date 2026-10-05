@@ -189,7 +189,7 @@ def test_publishing_is_atomic(study, monkeypatch):
         def explode(src, dst, *a, **k):
             raise OSError("disk full")
 
-        monkeypatch.setattr(shutil_module, "copy2", explode)
+        monkeypatch.setattr(shutil_module, "copyfile", explode)
         with pytest.raises(OSError):
             workspace.publish()
 
