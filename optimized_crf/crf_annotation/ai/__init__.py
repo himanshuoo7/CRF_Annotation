@@ -63,8 +63,9 @@ def build_resolvers(
     # Report the request shape actually sent, not the configured default —
     # effort and thinking are dropped for models that reject them.
     from .client import supports_adaptive_thinking, supports_effort
+    from .gemini import is_gemini, thinking_level
 
-    shape = ", ".join(
+    shape = f"thinking level {thinking_level(settings.effort)}" if is_gemini(settings.model) else ", ".join(
         part for part in (
             f"effort={settings.effort}" if supports_effort(settings.model) else "",
             "adaptive thinking" if supports_adaptive_thinking(settings.model) else "",

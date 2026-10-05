@@ -59,6 +59,21 @@ def test_cdisc_rules_place_common_forms_and_fields_without_a_model():
     assert proposal.unmapped == []
 
 
+def test_a_large_study_is_asked_in_small_batches_so_answers_are_not_truncated():
+    from crf_annotation.ai.propose_specs import BATCH_FIELDS
+
+    big = [(f"Q{i}", f"Odd question {i}") for i in range(60)]
+    small = [(f"R{i}", f"Other question {i}") for i in range(5)]
+    design = _design(("XX_FORM", "Questionnaire", big), ("YY_FORM", "Extras", small))
+    client = FakeClient({"forms": []})
+
+    propose_mappings(design, client)
+
+    sizes = [user.count('"field_oid"') for user in client.asked]
+    assert len(client.asked) == 3 and sum(sizes) == 65
+    assert max(sizes) <= BATCH_FIELDS
+
+
 def test_the_model_places_what_the_rules_cannot_and_bad_answers_are_dropped():
     design = _design(("NT_FORM", "Notes", [("COMMENT", "Comments"), ("DONE", "Was the form completed?"),
                                            ("JUNK", "Something odd")]))

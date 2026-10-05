@@ -11,12 +11,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+REQUEST_TIMEOUT_MS = 120_000
+
 # Gemini's thinking levels stop at "high"; the deeper Claude efforts map onto it.
 _THINKING_LEVELS = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 
 
 def is_gemini(model: str) -> bool:
     return model.startswith("gemini")
+
+
+def thinking_level(effort: str) -> str:
+    return _THINKING_LEVELS.get(effort, "medium")
 
 
 @dataclass
@@ -31,10 +37,13 @@ def make_client(project: Optional[str], region: str) -> Any:
     """Vertex AI with Application Default Credentials when a project is set;
     otherwise the Gemini API with GEMINI_API_KEY / GOOGLE_API_KEY."""
     from google import genai
+    from google.genai import types
 
+    # a hung request must not hang the run: give up after two minutes
+    http_options = types.HttpOptions(timeout=REQUEST_TIMEOUT_MS)
     if project:
-        return genai.Client(vertexai=True, project=project, location=region)
-    return genai.Client()
+        return genai.Client(vertexai=True, project=project, location=region, http_options=http_options)
+    return genai.Client(http_options=http_options)
 
 
 def _system_text(system: Sequence[Mapping[str, Any]] | str) -> str:
@@ -63,7 +72,7 @@ def request(
             max_output_tokens=max_tokens,
             response_mime_type="application/json",
             response_json_schema=dict(schema),
-            thinking_config=types.ThinkingConfig(thinking_level=_THINKING_LEVELS.get(effort, "medium")),
+            thinking_config=types.ThinkingConfig(thinking_level=thinking_level(effort)),
             # no tools are sent, so the SDK's automatic function calling is noise
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),

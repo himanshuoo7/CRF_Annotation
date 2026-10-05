@@ -39,6 +39,7 @@ from pydantic import BaseModel
 
 from crf_annotation import MatchingOptions, annotate_crf
 from crf_annotation.job import CrfAnnotationError
+from crf_annotation.logging_utils import get_logger
 
 DATA_DIR = Path(os.getenv("ACRF_DATA_DIR", "./data")).resolve()
 SECRET = os.getenv("ACRF_SERVICE_SECRET", "")
@@ -157,14 +158,19 @@ class _StepHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         message = record.getMessage()
+        if message.startswith("Proposed "):
+            # "Proposed 303 mapping(s): 68 by rule, ..." — shown under the step
+            status = read_status(self.job_id)
+            for item in status.get("steps", []):
+                if item["id"] == "specs":
+                    item["note"] = message
+            write_status(self.job_id, status)
         for marker, step in _STEP_MARKERS:
             if marker in message:
                 status = read_status(self.job_id)
                 for item in status.get("steps", []):
                     if item["id"] == step:
                         item["state"] = "done"
-                        if step == "specs" and "Proposed" in message:
-                            item["note"] = message
                 status["steps"] = _advance(status.get("steps", []))
                 write_status(self.job_id, status)
 
@@ -250,7 +256,7 @@ def run(job_id: str, x_acrf_ticket: Optional[str] = Header(default=None)) -> JSO
     write_status(job_id, {**summary, "state": "running", "steps": _advance(steps), "started": time.time()})
 
     handler = _StepHandler(job_id)
-    pipeline_logger = logging.getLogger("crf_annotation")
+    pipeline_logger = get_logger()  # the pipeline's own logger, not the package name
     pipeline_logger.addHandler(handler)
     pipeline_logger.setLevel(logging.INFO)
     try:

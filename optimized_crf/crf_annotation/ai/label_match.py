@@ -9,6 +9,7 @@ both of which land in the config workbook for review.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -73,6 +74,7 @@ class ClaudeLabelResolver:
 
     client: ClaudeClient
     batch_size: int = 40
+    parallel_calls: int = 6
     name: str = METHOD
 
     @classmethod
@@ -88,11 +90,15 @@ class ClaudeLabelResolver:
         for request in requests:
             by_form.setdefault(request.form_oid, []).append(request)
 
+        jobs = []
         for form_oid, form_requests in by_form.items():
             catalogue = self._catalogue(form_requests[0])
             for start in range(0, len(form_requests), self.batch_size):
-                batch = form_requests[start:start + self.batch_size]
-                results.extend(self._resolve_batch(form_oid, catalogue, batch))
+                jobs.append((form_oid, catalogue, form_requests[start:start + self.batch_size]))
+        # Batches are independent; a real study has dozens, so a few run at once.
+        with ThreadPoolExecutor(max_workers=self.parallel_calls) as pool:
+            for found in pool.map(lambda job: self._resolve_batch(*job), jobs):
+                results.extend(found)
 
         logger.info("Claude label matching: %s", self.client.usage_summary())
         return results

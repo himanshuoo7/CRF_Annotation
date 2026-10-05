@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -30,6 +31,11 @@ from ..logging_utils import get_logger
 logger = get_logger()
 
 PROPOSAL_FILE = "proposed_mappings.json"
+# A real study has hundreds of fields; one request for all of them overruns the
+# reply limit and comes back truncated. Small batches, a few at a time.
+BATCH_FIELDS = 25
+PARALLEL_CALLS = 4
+
 _NAME = re.compile(r"^[A-Z][A-Z0-9]{1,7}$")
 _DOMAIN = re.compile(r"^[A-Z]{2}$")
 
@@ -195,16 +201,40 @@ _SCHEMA: dict[str, Any] = {
 }
 
 
+def _batches(forms: list[dict[str, Any]], size: int = BATCH_FIELDS) -> list[list[dict[str, Any]]]:
+    """Whole forms packed up to `size` fields per request; a bigger form is split."""
+    batches: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    count = 0
+    for form in forms:
+        fields = form["fields"]
+        for start in range(0, len(fields), size):
+            part = {**form, "fields": fields[start:start + size]}
+            if current and count + len(part["fields"]) > size:
+                batches.append(current)
+                current, count = [], 0
+            current.append(part)
+            count += len(part["fields"])
+    if current:
+        batches.append(current)
+    return batches
+
+
 def _ask_model(client: Any, forms: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One structured call for every form still needing proposals."""
+    """Structured calls for every form still needing proposals, in batches."""
     if not forms or client is None or not client.available():
         return []
-    user = (
-        "Propose SDTM mappings for these EDC forms and fields (labels as printed on the CRF):\n"
-        + json.dumps(forms, indent=1)
-    )
-    answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/1")
-    return list((answer or {}).get("forms") or [])
+
+    def ask(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        user = (
+            "Propose SDTM mappings for these EDC forms and fields (labels as printed on the CRF):\n"
+            + json.dumps(batch, indent=1)
+        )
+        answer = client.json_call(system=_SYSTEM, user=user, schema=_SCHEMA, cache_salt="propose_specs/2")
+        return list((answer or {}).get("forms") or [])
+
+    with ThreadPoolExecutor(max_workers=PARALLEL_CALLS) as pool:
+        return [form for answered in pool.map(ask, _batches(forms)) for form in answered]
 
 
 def propose_mappings(design: StudyDesign, client: Any = None) -> Proposal:

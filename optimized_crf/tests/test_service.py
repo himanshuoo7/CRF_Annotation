@@ -64,6 +64,8 @@ def test_a_run_annotates_from_proposed_specs_and_serves_the_results(client, stud
     done = response.json()
     assert done["state"] == "done"
     assert all(step["state"] == "done" for step in done["steps"])
+    # the live steps come from the pipeline's log lines as it runs
+    assert "Proposed" in next(step for step in done["steps"] if step["id"] == "specs").get("note", "")
     assert done["result"]["annotations"] > 0
     assert done["result"]["proposed_specs"]["proposed"] >= 5
     assert "acrf" not in done["result"]  # no server paths leak out
