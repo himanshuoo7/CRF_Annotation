@@ -434,3 +434,21 @@ def test_a_box_for_a_heading_across_columns_goes_beside_it():
     title = page.iloc[0]
     rect = place_box(title, "CM.CMCAT", page, [], 595.0, 842.0)
     assert rect is not None and rect[0] > 446.0 and rect[1] >= 790.0 and rect[3] <= 842.0
+
+
+def test_every_requirement_names_tests_that_exist():
+    """The OQ traceability matrix must not point at renamed or deleted tests."""
+    import ast
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root / "tools"))
+    from traceability import REQUIREMENTS
+
+    defined = {node.name for path in (root / "tests").glob("test_*.py")
+               for node in ast.walk(ast.parse(path.read_text())) if isinstance(node, ast.FunctionDef)}
+    for req_id, _text, risk, tests in REQUIREMENTS:
+        assert tests and risk in {"High", "Medium", "Low"}, req_id
+        missing = [t for t in tests if t not in defined]
+        assert not missing, f"{req_id} names missing tests: {missing}"

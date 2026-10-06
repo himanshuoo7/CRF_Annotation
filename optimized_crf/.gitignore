@@ -14,3 +14,4 @@ venv/
 ai_cache/
 .acrf.lock
 .env
+validation/*.tmp
