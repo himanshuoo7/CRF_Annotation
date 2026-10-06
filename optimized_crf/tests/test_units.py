@@ -386,7 +386,7 @@ def test_a_box_does_not_drift_past_the_next_question():
     if that is what fits."""
     import pandas as pd
 
-    from crf_annotation.layout import THREE_LINE_HEIGHT, _Occupancy, _place_one
+    from crf_annotation.layout import _Occupancy, _place_one
 
     label = (45.0, 696.5, 140.0, 707.4)
     unit = (147.0, 680.0, 160.0, 690.9)
@@ -399,7 +399,8 @@ def test_a_box_does_not_drift_past_the_next_question():
                       floor=655.9, soft=taken)
     assert rect is not None
     assert rect[1] >= 655.9                                   # above the next question
-    assert rect[3] - rect[1] >= THREE_LINE_HEIGHT - 0.5       # narrowed to three lines
+    x0, y0, x1, y1 = rect
+    assert not (x0 < unit[2] and unit[0] < x1 and y0 < unit[3] and unit[1] < y1)   # never over the unit
 
 
 def test_a_domain_banner_avoids_the_page_title():

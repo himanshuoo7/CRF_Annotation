@@ -30,7 +30,7 @@ from .constants import (
     NOT_SUBMITTED_TEXT,
 )
 from .logging_utils import get_logger
-from .layout import THREE_LINE_HEIGHT, TWO_LINE_HEIGHT, three_lines, two_lines
+from .layout import ANNOTATION_FONT, THREE_LINE_HEIGHT, TWO_LINE_HEIGHT, three_lines, two_lines
 from .specs import domain_of
 
 logger = get_logger()
@@ -39,7 +39,6 @@ Rect = tuple[float, float, float, float]
 
 _BORDER_WIDTH = 1.0
 _DOTTED = [2, 2]
-_SOLID: list[int] = []
 
 
 def parse_pos(value: object) -> Optional[Rect]:
@@ -89,6 +88,13 @@ class CrfRenderer:
         not_submitted = 0
 
         with pymupdf.open(self.source_pdf) as document:
+            # A blank CRF exported from an EDC is often fillable. An aCRF is a
+            # document, not a form, and the FDA PDF specification allows no
+            # annotations (form fields included): bake them into the page.
+            fields = sum(1 for page in document for _ in page.widgets() or ())
+            if fields:
+                document.bake(annots=False, widgets=True)
+                logger.info("Flattened %d form field(s) from the blank CRF into page content", fields)
             for index, page in enumerate(document, start=1):
                 rows = by_page.get(index)
                 page_height = float(page.rect.height)
@@ -107,7 +113,12 @@ class CrfRenderer:
                     not_submitted += 1
                 drawn += page_drawn
 
-            document.save(self.output_pdf, deflate=True)
+            if fields:
+                _embed_unused_field_fonts(document)
+            staged = self.output_pdf.with_name(f".{self.output_pdf.name}.unoptimized")
+            document.save(staged, deflate=True, garbage=3)
+        finish_for_submission(staged, self.output_pdf)
+        staged.unlink(missing_ok=True)
 
         logger.info("Annotated %s: %d boxes drawn, %d page(s) marked NOT SUBMITTED",
                     self.output_pdf.name, drawn, not_submitted)
@@ -184,77 +195,96 @@ class CrfRenderer:
         is_header: bool,
         dashes: Optional[Sequence[int]] = None,
     ) -> bool:
+        """Draw one box as page content - a filled, bordered rectangle with
+        its text in the embedded annotation font. The FDA's PDF specification
+        asks for no PDF annotations (comments) in submitted documents, and
+        drawn text stays searchable and prints exactly as shown."""
         font_size = HEADER_FONT_SIZE if is_header else FIELD_FONT_SIZE
         x0, top, x1, bottom = rect
-        # Layout gives a long annotation two lines in a narrow, tall box.
+        # Layout gives a long annotation two or three lines in a narrow, tall box.
         if not is_header and "\n" not in text:
             if bottom - top >= THREE_LINE_HEIGHT - 0.5:
                 text = "\n".join(three_lines(text))
             elif bottom - top >= TWO_LINE_HEIGHT - 0.5:
                 text = "\n".join(two_lines(text))
+        lines = text.count("\n") + 1
+        # Edited text can be longer than the box an earlier run sized for it:
+        # widen the box rather than clip the text.
+        needed = max(ANNOTATION_FONT.text_length(part, fontsize=font_size) for part in text.split("\n")) + 6
+        x1 = max(x1, x0 + needed)
         # Centre the text band inside the reserved rectangle.
-        text_height = font_size * 1.35 * (text.count("\n") + 1)
+        text_height = font_size * _LINE_HEIGHT * lines
         offset = max(0.0, (bottom - top - text_height) / 2)
         box = pymupdf.Rect(x0, top + offset, x1, bottom - offset)
         if box.is_empty or box.is_infinite:
             return False
 
         try:
-            annot = _create_freetext(page, box, text, font_size, colour)
-            annot.set_border(width=_BORDER_WIDTH, dashes=list(dashes) if dashes else _SOLID)
-            annot.set_info(title=text.replace("\n", " "))
-            _update_freetext(annot)
+            shape = page.new_shape()
+            shape.draw_rect(box)
+            shape.finish(color=BORDER_COLOR, fill=colour, width=_BORDER_WIDTH,
+                         dashes="[2 2] 0" if dashes else None)
+            shape.commit()
+            _use_font(page)
+            inner = pymupdf.Rect(box.x0 + 1, box.y0 + 0.5, box.x1 - 1, box.y1 + 2)
+            spare = page.insert_textbox(inner, text, fontname=_FONT_NAME, fontsize=font_size,
+                                        color=FONT_COLOR, align=pymupdf.TEXT_ALIGN_CENTER)
+            if spare < 0:  # did not fit: give it the whole reserved rectangle
+                page.insert_textbox(pymupdf.Rect(x0, top, x1 + 4, bottom + 4), text, fontname=_FONT_NAME,
+                                    fontsize=font_size, color=FONT_COLOR, align=pymupdf.TEXT_ALIGN_CENTER)
         except Exception as exc:  # noqa: BLE001 - one bad box must not kill the run
             logger.warning("Could not draw annotation %r at %s: %s", text, rect, exc)
             return False
         return True
 
 
-# --- PyMuPDF compatibility -------------------------------------------------
-# `border_color` on a FreeText annotation became rich-text-only, and
-# `Annot.update(text_align=...)` was dropped, in recent PyMuPDF releases. The
-# original code used both unconditionally inside a bare `except: return None`,
-# so on a newer PyMuPDF it produced a PDF with no annotations at all and said
-# nothing. Here the supported call shape is probed once and reused.
-_CREATE_MODE: Optional[int] = None
-_UPDATE_ALIGN: Optional[bool] = None
+_FONT_NAME = "acrf"
+_LINE_HEIGHT = 1.36
 
 
-def _create_freetext(page, box, text: str, font_size: float, colour):
-    global _CREATE_MODE
-    base = {
-        "fontsize": font_size,
-        "text_color": FONT_COLOR,
-        "fill_color": colour,
-        "align": pymupdf.TEXT_ALIGN_CENTER,
-        "rotate": 0,
-        "fontname": "helv",
-    }
-    variants = (
-        {**base, "border_color": BORDER_COLOR},   # classic API
-        {**base, "border_width": _BORDER_WIDTH},  # PyMuPDF >= 1.25
-        base,                                     # last resort: no border args
-    )
-    order = range(len(variants)) if _CREATE_MODE is None else (_CREATE_MODE,)
-    last: Exception | None = None
-    for index in order:
-        try:
-            annot = page.add_freetext_annot(box, text, **variants[index])
-        except (TypeError, ValueError) as exc:
-            last = exc
+def _use_font(page: pymupdf.Page) -> None:
+    """Make the annotation font available on a page (embedded once per file)."""
+    if _FONT_NAME not in {font[4] for font in page.get_fonts()}:
+        page.insert_font(fontname=_FONT_NAME, fontbuffer=ANNOTATION_FONT.buffer)
+
+
+_STANDARD = ("ZapfDingbats", "Symbol")
+
+
+def _embed_unused_field_fonts(document: pymupdf.Document) -> None:
+    """Baked form fields keep their font resource (usually non-embedded
+    Helvetica) even when no character is drawn in it - an empty field. Point
+    such a resource at the embedded annotation font, so every font the PDF
+    declares is embedded. A font that does draw text is left alone (and the
+    FDA check reports it)."""
+    replaced = 0
+    for page in document:
+        unembedded = [f for f in page.get_fonts(full=True) if f[1] == "n/a" and not f[3].startswith(_STANDARD)]
+        if not unembedded:
             continue
-        _CREATE_MODE = index
-        return annot
-    raise last if last else RuntimeError("add_freetext_annot failed")
+        drawn = {span["font"] for span in page.get_texttrace()}
+        _use_font(page)
+        ours = next(f[0] for f in page.get_fonts(full=True) if f[4] == _FONT_NAME)
+        for _xref, _ext, _type, basefont, name, _encoding, referencer, *_ in unembedded:
+            if basefont in drawn or not referencer:
+                continue
+            document.xref_set_key(referencer, f"Resources/Font/{name}", f"{ours} 0 R")
+            replaced += 1
+    if replaced:
+        logger.info("Pointed %d unused form-field font reference(s) at the embedded annotation font", replaced)
 
 
-def _update_freetext(annot) -> None:
-    global _UPDATE_ALIGN
-    if _UPDATE_ALIGN is not False:
-        try:
-            annot.update(text_align=pymupdf.TEXT_ALIGN_CENTER)
-            _UPDATE_ALIGN = True
-            return
-        except TypeError:
-            _UPDATE_ALIGN = False
-    annot.update()
+def finish_for_submission(source: Path, target: Path) -> None:
+    """Open on the bookmarks panel and optimise for Fast Web View, as the FDA
+    PDF specification asks ("Initial View Settings", "Optimize for Fast Web
+    View")."""
+    try:
+        import pikepdf
+    except ImportError:  # pragma: no cover - depends on install
+        logger.warning("pikepdf is not installed: the aCRF is not linearized for Fast Web View")
+        Path(target).write_bytes(Path(source).read_bytes())
+        return
+    with pikepdf.open(source) as pdf:
+        if "/Outlines" in pdf.Root:
+            pdf.Root.PageMode = pikepdf.Name.UseOutlines
+        pdf.save(target, linearize=True)

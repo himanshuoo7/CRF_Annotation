@@ -209,3 +209,11 @@ def test_an_add_that_would_duplicate_is_refused_and_said_so(client, study):
     assert reply["edits_applied"] == 0
     assert reply["changes"][0]["action"] == "edit_refused" and "already has DM.SEX" in reply["changes"][0]["reason"]
     assert "Not applied" in reply["reply"]
+
+
+def test_the_fda_pdf_check_is_served_with_the_acrf(client, study):
+    upload(client, study)
+    done = client.post(f"/v1/jobs/{JOB}/run", headers=ticket()).json()
+    assert set(done["result"]["fda_pdf_check"]) == {"pass", "fail", "warn", "info"}
+    report = client.get(f"/v1/jobs/{JOB}/files/fda_pdf_check.txt", headers=ticket())
+    assert report.status_code == 200 and "FDA PDF Specifications" in report.text

@@ -14,10 +14,21 @@ from crf_annotation.sources import identify, load_study_design, registered
 from crf_annotation.sources.profile import Profile, ProfileSource
 
 
-def annotations(pdf_path):
+def annotations(pdf_path) -> dict[int, list[str]]:
+    """The annotation boxes on each page: text drawn in the annotation font
+    (boxes are page content, not PDF comments)."""
+    found: dict[int, list[str]] = {}
     with pymupdf.open(pdf_path) as document:
-        return {i: [a.info.get("title", "") for a in p.annots()]
-                for i, p in enumerate(document, start=1)}
+        for index, page in enumerate(document, start=1):
+            boxes = []
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    words = [span["text"].strip() for span in line["spans"]
+                             if "Noto" in span["font"] or "acrf" in span["font"].lower()]
+                    if any(words):
+                        boxes.append(" ".join(w for w in words if w))
+            found[index] = boxes
+    return found
 
 
 def test_builtin_adapters_are_registered():

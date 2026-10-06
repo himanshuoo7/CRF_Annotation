@@ -1,5 +1,7 @@
 pandas>=1.5
 pymupdf>=1.23
+pymupdf-fonts>=1.0.5   # Noto Sans, embedded in full in every aCRF (FDA: embed fonts)
+pikepdf>=9.0          # Fast Web View (linearized) output, as the FDA PDF spec asks
 pypdf>=3.9
 XlsxWriter>=3.0
 openpyxl>=3.1

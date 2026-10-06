@@ -49,7 +49,7 @@ RETENTION_DAYS = float(os.getenv("ACRF_RETENTION_DAYS", "7"))
 MAX_UPLOAD_BYTES = int(os.getenv("ACRF_MAX_UPLOAD_BYTES", str(80 * 1024 * 1024)))
 JOB_ID = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
-OUTPUT_FILES = {"acrf.pdf", "aCRF_Config.xlsx", "proposed_mappings.json", "audit_trail.csv"}
+OUTPUT_FILES = {"acrf.pdf", "aCRF_Config.xlsx", "proposed_mappings.json", "audit_trail.csv", "fda_pdf_check.txt"}
 
 app = FastAPI(title="aCRF service", docs_url=None, redoc_url=None, openapi_url=None)
 logger = logging.getLogger("acrf.service")

@@ -17,10 +17,19 @@ from crf_annotation.constants import OUTPUT_CONFIG_NAME, OUTPUT_PDF_NAME
 
 
 def annotations(pdf_path) -> dict[int, list[str]]:
+    """The annotation boxes on each page: text drawn in the annotation font
+    (boxes are page content, not PDF comments)."""
     found: dict[int, list[str]] = {}
     with pymupdf.open(pdf_path) as document:
         for index, page in enumerate(document, start=1):
-            found[index] = [a.info.get("title", "") for a in page.annots()]
+            boxes = []
+            for block in page.get_text("dict")["blocks"]:
+                for line in block.get("lines", []):
+                    words = [span["text"].strip() for span in line["spans"]
+                             if "Noto" in span["font"] or "acrf" in span["font"].lower()]
+                    if any(words):
+                        boxes.append(" ".join(w for w in words if w))
+            found[index] = boxes
     return found
 
 
@@ -349,3 +358,44 @@ def test_marking_can_be_switched_off(study):
     assert "NOT SUBMITTED" not in drawn
     assert result.not_submitted == 0
     assert result.unmapped_variables == 2      # still recorded
+
+
+def test_the_acrf_meets_the_fda_pdf_rules_this_tool_controls(study):
+    """FDA PDF Specifications v4.1: no annotations, embedded fonts, bookmarks
+    panel on open, Fast Web View - and a report saying so ships with it."""
+    import json
+
+    import pikepdf
+
+    annotate_crf(**study["job"])
+    pdf = study["out"] / OUTPUT_PDF_NAME
+    with pymupdf.open(pdf) as document:
+        assert all(not list(page.annots()) for page in document)          # boxes are page content
+        ours = [f for page in document for f in page.get_fonts(full=True) if "Noto" in f[3]]
+        assert ours and all(f[1] != "n/a" and "+" not in f[3] for f in ours)   # embedded, in full
+        assert document.xref_get_key(document.pdf_catalog(), "PageMode")[1] == "/UseOutlines"
+        assert "DM.SEX" in document[0].get_text()                         # still searchable text
+    with pikepdf.open(pdf) as raw:
+        assert raw.is_linearized
+
+    report = json.loads((study["out"] / "fda_pdf_check.json").read_text())
+    by_rule = {c["rule"]: c["status"] for c in report["checks"]}
+    for rule in ("PDF version 1.4-1.7", "No JavaScript", "No PDF annotations (annotation boxes are page content)",
+                 "Opens to Bookmarks Panel and Page", "Optimized for Fast Web View (linearized)",
+                 "Embedded fonts are full, not subsets"):
+        assert by_rule[rule] == "pass", rule
+    assert (study["out"] / "fda_pdf_check.txt").read_text().startswith("aCRF check against the FDA")
+
+
+def test_form_fields_in_a_fillable_blank_crf_are_flattened(study):
+    """EDC exports are often fillable; the aCRF must carry no form fields."""
+    with pymupdf.open(study["crf"]) as document:
+        widget = pymupdf.Widget()
+        widget.field_type = pymupdf.PDF_WIDGET_TYPE_CHECKBOX
+        widget.field_name = "sex_male"
+        widget.rect = pymupdf.Rect(60, 150, 70, 160)
+        document[0].add_widget(widget)
+        document.save(study["crf"], incremental=True, encryption=0)
+    annotate_crf(**study["job"])
+    with pymupdf.open(study["out"] / OUTPUT_PDF_NAME) as document:
+        assert not any(list(page.widgets()) for page in document)

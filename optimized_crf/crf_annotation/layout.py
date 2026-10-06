@@ -101,6 +101,19 @@ def two_lines(text: str) -> list[str]:
     return [text[:cut], text[cut + 1:]]
 
 
+def _annotation_font() -> pymupdf.Font:
+    """Noto Sans (SIL OFL), embedded in full in every aCRF: the FDA asks for
+    non-standard fonts to be fully embedded, and a font the reviewer's
+    machine may lack is never substituted."""
+    try:
+        return pymupdf.Font("notos")          # from the pymupdf-fonts package
+    except Exception:  # noqa: BLE001 - without it, fall back (the FDA check will say so)
+        return pymupdf.Font("helv")
+
+
+ANNOTATION_FONT = _annotation_font()
+
+
 def annotation_width(text: str) -> float:
     """Box width for an annotation, measured in the font it is drawn in.
 
@@ -109,7 +122,7 @@ def annotation_width(text: str) -> float:
     being pushed to the foot of the column, away from its question.
     """
     try:
-        measured = pymupdf.get_text_length(str(text), fontname="helv", fontsize=FIELD_FONT_SIZE)
+        measured = ANNOTATION_FONT.text_length(str(text), fontsize=FIELD_FONT_SIZE)
     except Exception:  # noqa: BLE001 - fall back to the estimate
         measured = len(str(text)) * FIELD_CHAR_WIDTH
     return measured + _TEXT_PADDING

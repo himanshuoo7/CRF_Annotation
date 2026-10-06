@@ -73,6 +73,8 @@ class AnnotationResult:
     proposed_specs: dict = field(default_factory=dict)
     """Set when the specs were drafted from the design: how many mappings were
     proposed by rule and by model. Every one of them needs a reviewer."""
+    fda_pdf_check: dict = field(default_factory=dict)
+    """Pass/fail/warn counts of the aCRF against the FDA PDF specifications."""
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +93,7 @@ class AnnotationResult:
             "not_submitted": self.not_submitted,
             "unmapped_variables": self.unmapped_variables,
             "proposed_specs": self.proposed_specs,
+            "fda_pdf_check": self.fda_pdf_check,
         }
 
 
@@ -165,7 +168,9 @@ def run(job: CrfJob) -> AnnotationResult:
         write_config_workbook(workspace.config_workbook, coordinates, unmapped, file_info)
         outputs = workspace.publish()
 
+    fda = _check_against_fda(outputs.pdf_path)
     result = _summarise(job, coordinates, unmapped, outputs, design_source, stats, counts)
+    result.fda_pdf_check = fda
     logger.info("Run complete: %d annotation(s) on %d page(s)%s",
                 result.annotations, result.pages,
                 f", {result.needs_review} needing review" if result.needs_review else "")
@@ -278,6 +283,26 @@ def _binder(options: BindingOptions):
         logger.warning("Sequential form binding is enabled as a fallback; if it is "
                        "used, every annotation on the run needs review")
     return AutoBinder(binders, fallback=fallback)
+
+
+def _check_against_fda(pdf_path) -> dict:
+    """Write fda_pdf_check.txt/.json beside the aCRF; return the counts."""
+    if not pdf_path:
+        return {}
+    from .fda_check import check_pdf, write_report
+    from .layout import ANNOTATION_FONT
+
+    try:
+        checks = check_pdf(pdf_path, own_fonts=[ANNOTATION_FONT.name.replace(" ", "")])
+        counts = write_report(checks, pdf_path.with_name("fda_pdf_check.json"),
+                              pdf_path.with_name("fda_pdf_check.txt"))
+    except Exception as exc:  # noqa: BLE001 - a report must never fail the run
+        logger.warning("FDA PDF check could not run: %s", exc)
+        return {}
+    failed = [c.rule for c in checks if c.status == "fail"]
+    logger.info("FDA PDF check: %d passed, %d failed, %d to review%s", counts["pass"], counts["fail"],
+                counts["warn"], f" (failed: {'; '.join(failed)})" if failed else "")
+    return counts
 
 
 def _ai_settings(job: CrfJob):
