@@ -1,9 +1,9 @@
 # Operational Qualification report - aCRF Gen 1.0.0
 
-- **Release:** commit `4470353` (uncommitted changes present)
-- **Executed:** 2026-10-06 04:05 UTC
+- **Release:** commit `c7cc574`
+- **Executed:** 2026-10-06 04:06 UTC
 - **Environment:** Python 3.13.2 on Darwin arm64
-- **Result:** NOT QUALIFIED - 21/21 requirements met; 137/137 automated tests passed
+- **Result:** QUALIFIED - 21/21 requirements met; 138/138 automated tests passed
 
 ## Component versions
 
