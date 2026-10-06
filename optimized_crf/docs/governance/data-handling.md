@@ -42,8 +42,9 @@ data at rest by default.
 ## Who can access it
 
 - **Sign-in required** — Google, or email and password with email verification.
-- **Verified accounts** — sign-up needs a verified email address; each account
-  gets one free aCRF, and free runs across all accounts are capped per day.
+- **Access granted per account** — a person signs up with a verified email
+  and requests a trial; a Vajrra admin switches access on (a Free-plan account
+  then gets one free aCRF). Free runs across all accounts are also capped per day.
 - **Per-job isolation** — a job belongs to one account. Every request to the
   annotation service carries a signed ticket (HMAC-SHA256) naming the user
   and that single job, valid for 15 minutes; any other job is refused.

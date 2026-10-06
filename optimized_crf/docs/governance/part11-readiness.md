@@ -15,7 +15,7 @@ Status: **Provided** · **Partial** · **Customer** (customer SOP) · **Gap**
 | 11.10(a) | Validation for accuracy, reliability, consistent performance | Partial | Automated test suite and a per-release OQ report ([validation-plan.md](validation-plan.md)); customer performs PQ on their own CRFs |
 | 11.10(b) | Accurate and complete copies, human-readable and electronic | Provided | aCRF PDF, review workbook (XLSX), FDA PDF check, audit trail (CSV) all downloadable |
 | 11.10(c) | Protection of records for their retention period | Partial | Files and audit trail kept 7 days, then deleted; customer archives the downloaded deliverables in their own system |
-| 11.10(d) | Limiting access to authorized individuals | Provided | Sign-in with verified email, per-job signed tickets, admin list |
+| 11.10(d) | Limiting access to authorized individuals | Provided | Sign-in with verified email, access granted per account by an admin, per-job signed tickets |
 | 11.10(e) | Secure, computer-generated, time-stamped audit trail of create/modify/delete; previous values not obscured | Provided | Append-only per-job trail: user, UTC timestamp, action, before/after; SHA-256 hash chain reveals any altered or removed entry; exported as CSV |
 | 11.10(e) | Audit trail retained as long as the record | Partial | 7 days by decision; customer keeps the exported trail with the aCRF |
 | 11.10(f) | Operational checks enforcing permitted sequencing | Provided | Workflow enforced: inputs → run → review/edit; edits refused before a run; edits validated before applied |
