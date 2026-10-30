@@ -4,10 +4,10 @@ The service sits behind accounts.vajrra.ai/acrf, which signs every request with
 a short-lived ticket (`X-Acrf-Ticket`, HMAC with `ACRF_SERVICE_SECRET`). It is
 deployed with `--allow-unauthenticated` because the ticket is the auth.
 
-One-time setup (project `divyastra-510704`, billing enabled):
+One-time setup (a GCP project with billing enabled):
 
 ```sh
-PROJECT=divyastra-510704 REGION=asia-south1 BUCKET=divyastra-acrf-jobs
+PROJECT=<your-project> REGION=<your-region> BUCKET=<your-bucket>
 gcloud config set project $PROJECT
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com \
   artifactregistry.googleapis.com aiplatform.googleapis.com secretmanager.googleapis.com
