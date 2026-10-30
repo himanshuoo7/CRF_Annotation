@@ -3,6 +3,7 @@
   "displayName": "SDTM aCRF",
   "version": "1.0.0",
   "description": "Generate SDTM annotated CRFs from any EDC, review the annotations that were guessed rather than matched exactly, and diagnose runs that came out thin.",
+  "license": "Apache-2.0",
   "keywords": [
     "sdtm",
     "acrf",

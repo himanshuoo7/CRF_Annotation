@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Annotate a blank CRF with SDTM mappings (aCRF generation)."
 requires-python = ">=3.9"
 readme = "README.md"
-license = {text = "Proprietary"}
+license = {text = "Apache-2.0"}
 authors = [{name = "Himanshu Dadhich"}]
 dependencies = [
     "pandas>=1.5",

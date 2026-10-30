@@ -74,3 +74,13 @@ Verified against synthetic fixtures and one live model call. **Not yet run
 against a real study.** See *Known limitations* in
 [`optimized_crf/CHANGELOG.md`](optimized_crf/CHANGELOG.md) before relying on it
 for a submission deliverable.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026
+Himanshu Dadhich.
+
+The PDF dependency PyMuPDF is AGPL-3.0 (or commercially licensed by Artifex);
+see *Dependencies and licensing* in
+[`optimized_crf/README.md`](optimized_crf/README.md) before redistributing or
+offering this as a service.
