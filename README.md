@@ -4,6 +4,10 @@ SDTM annotated CRF (aCRF) generation: take a blank case report form and label
 each field with the SDTM variable it maps to, then produce the annotated PDF,
 its bookmarks, and a reviewable configuration workbook.
 
+> **Prefer not to run it yourself?** [aCRF Gen](https://vajrra.ai/acrf.html) is the hosted version of this tool,
+> built by [Vajrra](https://vajrra.ai): upload a blank CRF and your EDC export and get a draft aCRF in minutes.
+> [Request a free trial →](https://vajrra.ai/acrf.html)
+
 ## Layout
 
 | Path | What it is |
